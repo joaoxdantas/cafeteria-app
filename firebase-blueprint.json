@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "Drink": {
+      "title": "Drink",
+      "description": "A customized drink recipe created by the Admin.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the drink" },
+        "espresso_shots": { "type": "number", "description": "Number of espresso shots" },
+        "leite": { "type": "boolean", "description": "Whether it contains milk" },
+        "foam": { "type": "number", "description": "Foam level: 0=none, 1=latte, 2=cappuccino, 3=macchiato" },
+        "chocolate": { "type": "number", "description": "Chocolate level: 0-3" },
+        "sprinkles": { "type": "boolean", "description": "Whether it has sprinkles" },
+        "chai": { "type": "number", "description": "Chai level: 0-3" },
+        "whipped_cream": { "type": "boolean", "description": "Whether it has whipped cream" },
+        "layer_order": { "type": "array", "items": { "type": "string" }, "description": "Order of ingredients from bottom to top" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["name", "espresso_shots", "leite", "foam", "chocolate", "sprinkles", "chai", "whipped_cream", "layer_order", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer order for a drink.",
+      "type": "object",
+      "properties": {
+        "customer_name": { "type": "string", "description": "Name of the customer" },
+        "drink_id": { "type": "string", "description": "ID of the ordered drink" },
+        "drink_name": { "type": "string", "description": "Name of the ordered drink" },
+        "drink_snapshot": { "$ref": "#/entities/Drink", "description": "Snapshot of the drink recipe at the time of order" },
+        "milk_type": { "type": "string", "enum": ["full cream", "lactose free", "skinny", "almond", "oat", "soy"], "description": "Type of milk" },
+        "notes": { "type": "string", "description": "Special notes" },
+        "status": { "type": "string", "enum": ["pending", "in_progress_barista", "ready_for_assembler", "completed"], "description": "Current status of the order" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Order creation timestamp" }
+      },
+      "required": ["customer_name", "drink_id", "drink_name", "drink_snapshot", "milk_type", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/drinks/{drinkId}": {
+      "schema": { "$ref": "#/entities/Drink" },
+      "description": "Collection of available drink recipes."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Collection of customer orders."
+    }
+  }
+}
