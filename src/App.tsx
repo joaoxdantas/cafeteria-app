@@ -5,8 +5,17 @@ import { Admin } from './pages/Admin';
 import { Orders } from './pages/Orders';
 import { Barista } from './pages/Barista';
 import { Assembler } from './pages/Assembler';
+import { ShopProvider, useShop } from './contexts/ShopContext';
+import { ShopSelection } from './components/ShopSelection';
+import { ThemeProvider } from './contexts/ThemeContext';
 
-export default function App() {
+function AppContent() {
+  const { selectedShop } = useShop();
+
+  if (!selectedShop) {
+    return <ShopSelection />;
+  }
+
   return (
     <Router>
       <Routes>
@@ -19,5 +28,15 @@ export default function App() {
         </Route>
       </Routes>
     </Router>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <ShopProvider>
+        <AppContent />
+      </ShopProvider>
+    </ThemeProvider>
   );
 }

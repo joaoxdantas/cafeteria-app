@@ -4,8 +4,10 @@ import { db } from '../firebase';
 import { Order, OperationType } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { ChevronDown, ChevronUp, Download, Trash2, Filter, AlertTriangle } from 'lucide-react';
+import { useShop } from '../contexts/ShopContext';
 
 export function OrderHistory() {
+  const { selectedShop } = useShop();
   const [orders, setOrders] = useState<Order[]>([]);
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -16,7 +18,9 @@ export function OrderHistory() {
   const [filterDrink, setFilterDrink] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'orders'), orderBy('timestamp', 'desc'));
+    if (!selectedShop) return;
+
+    const q = query(collection(db, 'shops', selectedShop.id, 'orders'), orderBy('timestamp', 'desc'));
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -26,10 +30,10 @@ export function OrderHistory() {
         })) as Order[];
         setOrders(ordersData);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'orders')
+      (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/orders`)
     );
     return () => unsubscribe();
-  }, []);
+  }, [selectedShop]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
@@ -99,6 +103,7 @@ export function OrderHistory() {
   };
 
   const confirmCleanHistory = async () => {
+    if (!selectedShop) return;
     setShowConfirmModal(false);
     try {
       const batches = [];
@@ -106,7 +111,7 @@ export function OrderHistory() {
       let operationCount = 0;
 
       for (const order of filteredOrders) {
-        currentBatch.delete(doc(db, 'orders', order.id));
+        currentBatch.delete(doc(db, 'shops', selectedShop.id, 'orders', order.id));
         operationCount++;
 
         if (operationCount === 500) {
@@ -122,26 +127,26 @@ export function OrderHistory() {
 
       await Promise.all(batches);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'orders');
+      handleFirestoreError(error, OperationType.DELETE, `shops/${selectedShop.id}/orders`);
     }
   };
 
   return (
-    <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 relative">
+    <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 relative transition-colors duration-300">
       {showConfirmModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div className="flex items-center space-x-3 text-red-600 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl max-w-md w-full p-6 border border-transparent dark:border-slate-800">
+            <div className="flex items-center space-x-3 text-red-600 dark:text-red-400 mb-4">
               <AlertTriangle className="w-8 h-8" />
               <h3 className="text-xl font-bold">Confirm Deletion</h3>
             </div>
-            <p className="text-slate-600 mb-6">
+            <p className="text-slate-600 dark:text-slate-400 mb-6">
               Are you sure you want to delete all {filteredOrders.length} filtered orders? This action cannot be undone.
             </p>
             <div className="flex justify-end space-x-3">
               <button 
                 onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg font-medium transition-colors"
               >
                 Cancel
               </button>
@@ -157,12 +162,12 @@ export function OrderHistory() {
       )}
 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-        <h2 className="text-xl sm:text-2xl font-bold text-slate-900">Order History</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">Order History</h2>
         <div className="flex space-x-2">
           <button 
             onClick={exportToCSV}
             disabled={filteredOrders.length === 0}
-            className="flex items-center px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50 text-sm font-medium"
+            className="flex items-center px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 text-sm font-medium"
           >
             <Download className="w-4 h-4 mr-2" />
             Export CSV
@@ -170,7 +175,7 @@ export function OrderHistory() {
           <button 
             onClick={() => setShowConfirmModal(true)}
             disabled={filteredOrders.length === 0}
-            className="flex items-center px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium"
+            className="flex items-center px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50 text-sm font-medium"
           >
             <Trash2 className="w-4 h-4 mr-2" />
             Clean History
@@ -178,8 +183,8 @@ export function OrderHistory() {
         </div>
       </div>
 
-      <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-6 flex flex-col sm:flex-row gap-4">
-        <div className="flex items-center text-slate-500 mb-2 sm:mb-0 shrink-0">
+      <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 mb-6 flex flex-col sm:flex-row gap-4 transition-colors">
+        <div className="flex items-center text-slate-500 dark:text-slate-400 mb-2 sm:mb-0 shrink-0">
           <Filter className="w-5 h-5 mr-2" />
           <span className="font-medium">Filters:</span>
         </div>
@@ -188,12 +193,12 @@ export function OrderHistory() {
             type="date" 
             value={filterDate}
             onChange={(e) => setFilterDate(e.target.value)}
-            className="rounded-md border-slate-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 text-sm p-2 border"
+            className="rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 text-sm p-2 border transition-colors"
           />
           <select 
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="rounded-md border-slate-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 text-sm p-2 border"
+            className="rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 text-sm p-2 border transition-colors"
           >
             <option value="all">All Statuses</option>
             <option value="pending">Pending</option>
@@ -204,57 +209,57 @@ export function OrderHistory() {
             placeholder="Search by drink name..."
             value={filterDrink}
             onChange={(e) => setFilterDrink(e.target.value)}
-            className="rounded-md border-slate-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 text-sm p-2 border"
+            className="rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 text-sm p-2 border transition-colors"
           />
         </div>
       </div>
       
       {Object.keys(groupedOrders).length === 0 ? (
-        <div className="text-center text-slate-500 py-10">No orders found matching criteria.</div>
+        <div className="text-center text-slate-500 dark:text-slate-400 py-10">No orders found matching criteria.</div>
       ) : (
         <div className="space-y-4">
           {Object.entries(groupedOrders).map(([date, dayOrders]) => {
             const ordersList = dayOrders as Order[];
             return (
-            <div key={date} className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+            <div key={date} className="bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
               <button 
                 onClick={() => toggleDate(date)}
-                className="w-full bg-slate-100 px-4 py-3 border-b border-slate-200 flex justify-between items-center hover:bg-slate-200 transition-colors focus:outline-none"
+                className="w-full bg-slate-100 dark:bg-slate-800 px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors focus:outline-none"
               >
-                <h3 className="font-bold text-slate-800">{date} <span className="text-slate-500 font-normal text-sm ml-2">({ordersList.length} orders)</span></h3>
+                <h3 className="font-bold text-slate-800 dark:text-white">{date} <span className="text-slate-500 dark:text-slate-400 font-normal text-sm ml-2">({ordersList.length} orders)</span></h3>
                 {expandedDates[date] ? (
-                  <ChevronUp className="w-5 h-5 text-slate-500" />
+                  <ChevronUp className="w-5 h-5 text-slate-500 dark:text-slate-400" />
                 ) : (
-                  <ChevronDown className="w-5 h-5 text-slate-500" />
+                  <ChevronDown className="w-5 h-5 text-slate-500 dark:text-slate-400" />
                 )}
               </button>
               
               {expandedDates[date] && (
-                <div className="divide-y divide-slate-200">
+                <div className="divide-y divide-slate-200 dark:divide-slate-800">
                   {ordersList.map((order) => (
                     <div key={order.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-medium text-slate-500">
+                          <span className="text-sm font-medium text-slate-500 dark:text-slate-400">
                             {new Date(order.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                            order.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+                            order.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400'
                           }`}>
                             {order.status}
                           </span>
                         </div>
-                        <h4 className="font-bold text-slate-900 text-lg">{order.customer_name}</h4>
-                        <p className="text-amber-700 font-medium">{order.drink_name}</p>
+                        <h4 className="font-bold text-slate-900 dark:text-white text-lg">{order.customer_name}</h4>
+                        <p className="text-amber-700 dark:text-amber-500 font-medium">{order.drink_name}</p>
                       </div>
                       
-                      <div className="flex-1 text-sm text-slate-600 space-y-1">
+                      <div className="flex-1 text-sm text-slate-600 dark:text-slate-400 space-y-1">
                         {order.drink_snapshot?.leite && (
-                          <div><span className="font-medium">Milk:</span> <span className="uppercase">{order.milk_type}</span></div>
+                          <div><span className="font-medium text-slate-700 dark:text-slate-300">Milk:</span> <span className="uppercase">{order.milk_type}</span></div>
                         )}
-                        <div><span className="font-medium">Sugar:</span> {order.sugar}</div>
+                        <div><span className="font-medium text-slate-700 dark:text-slate-300">Sugar:</span> {order.sugar}</div>
                         {order.notes && (
-                          <div><span className="font-medium">Notes:</span> {order.notes}</div>
+                          <div><span className="font-medium text-slate-700 dark:text-slate-300">Notes:</span> {order.notes}</div>
                         )}
                       </div>
                     </div>

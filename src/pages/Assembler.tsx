@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Order, OperationType, MilkType } from '../types';
+import { Order, OperationType, MilkType, AppSettings } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
-import { CheckCircle, X, Check, FileText } from 'lucide-react';
+import { CheckCircle, X, Check, FileText, Coffee } from 'lucide-react';
 import { useIngredients } from '../hooks/useIngredients';
+import { useShop } from '../contexts/ShopContext';
 
 const milkColors: Record<MilkType, string> = {
   'almond': 'bg-red-500 text-white',
@@ -16,16 +17,27 @@ const milkColors: Record<MilkType, string> = {
   'oat': 'bg-amber-200 text-amber-900',
 };
 
+const sizeColors: Record<string, string> = {
+  'Piccolo': 'bg-pink-500 text-white',
+  'Small': 'bg-cyan-500 text-white',
+  'Medium': 'bg-emerald-500 text-white',
+  'Large': 'bg-orange-500 text-white',
+};
+
 export function Assembler() {
+  const { selectedShop } = useShop();
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showRecipe, setShowRecipe] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>({ isSizeSelectionEnabled: true });
   const ingredients = useIngredients();
 
   useEffect(() => {
+    if (!selectedShop) return;
+
     // Assembler sees all pending orders, same as Barista
-    const q = query(collection(db, 'orders'), where('status', '==', 'pending'));
-    const unsubscribe = onSnapshot(
+    const q = query(collection(db, 'shops', selectedShop.id, 'orders'), where('status', '==', 'pending'));
+    const unsubscribeOrders = onSnapshot(
       q,
       (snapshot) => {
         const ordersData = snapshot.docs.map((doc) => ({
@@ -36,20 +48,35 @@ export function Assembler() {
         ordersData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         setOrders(ordersData);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'orders')
+      (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/orders`)
     );
-    return () => unsubscribe();
-  }, []);
+
+    const unsubscribeSettings = onSnapshot(
+      doc(db, 'shops', selectedShop.id, 'settings', 'app'),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setSettings(snapshot.data() as AppSettings);
+        }
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, `shops/${selectedShop.id}/settings/app`)
+    );
+
+    return () => {
+      unsubscribeOrders();
+      unsubscribeSettings();
+    };
+  }, [selectedShop]);
 
   const handleComplete = async (orderId: string) => {
+    if (!selectedShop) return;
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
+      await updateDoc(doc(db, 'shops', selectedShop.id, 'orders', orderId), {
         status: 'completed'
       });
       setSelectedOrder(null);
       setShowRecipe(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/orders/${orderId}`);
     }
   };
 
@@ -72,7 +99,7 @@ export function Assembler() {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full relative">
+    <div className="flex-1 flex flex-col h-full relative transition-colors duration-300">
       {/* Recipe Modal */}
       {showRecipe && selectedOrder && (
         <div 
@@ -85,7 +112,14 @@ export function Assembler() {
           >
             <div className="flex justify-between items-start mb-4 sm:mb-6 shrink-0">
               <div>
-                <h3 className="text-2xl sm:text-4xl font-black text-white mb-1 sm:mb-2">{selectedOrder.drink_name}</h3>
+                <div className="flex flex-col mb-1 sm:mb-2">
+                  {settings.isSizeSelectionEnabled && (
+                    <span className={`inline-block px-3 py-1 rounded-lg text-lg sm:text-2xl font-black uppercase tracking-widest w-fit mb-2 ${sizeColors[selectedOrder.size || 'Medium']}`}>
+                      {selectedOrder.size}
+                    </span>
+                  )}
+                  <h3 className="text-2xl sm:text-4xl font-black text-white">{selectedOrder.drink_name}</h3>
+                </div>
                 <p className="text-slate-400 text-base sm:text-lg">For {selectedOrder.customer_name}</p>
               </div>
               <button onClick={() => { setShowRecipe(false); setSelectedOrder(null); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full transition-colors shrink-0 ml-4">
@@ -127,27 +161,40 @@ export function Assembler() {
         </div>
       )}
 
-      <div className="bg-slate-100 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 overflow-hidden h-full">
-        <h2 className="text-lg sm:text-2xl font-black text-slate-800 mb-2 sm:mb-4 text-center bg-white py-2 rounded-lg shadow-sm shrink-0">ASSEMBLY QUEUE</h2>
+      <div className="bg-slate-100 dark:bg-slate-900 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden h-full transition-colors">
+        <h2 className="text-lg sm:text-2xl font-black text-slate-800 dark:text-white mb-2 sm:mb-4 text-center bg-white dark:bg-slate-800 py-2 rounded-lg shadow-sm shrink-0 transition-colors">ASSEMBLY QUEUE</h2>
         
         <div className="flex-1 overflow-y-auto flex flex-col gap-3 sm:gap-4 pr-1">
           {orders.map((order, index) => (
             <div 
               key={order.id} 
-              className="w-full flex-1 bg-white rounded-xl shadow-md border-2 border-slate-200 overflow-hidden flex flex-col sm:flex-row relative text-left transition-all group min-h-[120px] sm:min-h-[160px]"
+              className="w-full flex-1 bg-white dark:bg-slate-800 rounded-xl shadow-md border-2 border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col sm:flex-row relative text-left transition-all group min-h-[120px] sm:min-h-[160px]"
             >
               <div className="absolute top-0 right-0 bg-amber-500 text-white px-3 py-1 rounded-bl-lg font-black z-10 text-xs sm:text-sm">
                 #{index + 1}
               </div>
               
-              <div className="w-full sm:w-32 lg:w-40 h-32 sm:h-auto bg-black flex justify-center items-center shrink-0 relative overflow-hidden py-2">
+              <div className="w-full sm:w-32 lg:w-40 h-32 sm:h-auto bg-black flex justify-center items-center shrink-0 relative overflow-hidden py-2 border-b sm:border-b-0 sm:border-r border-slate-800">
                  <DrinkVisualizer drink={order.drink_snapshot} className="scale-50 sm:scale-75 lg:scale-90 origin-center" />
               </div>
               
               <div className="p-3 sm:p-4 lg:p-6 flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6">
                 <div className="flex-1 flex flex-col justify-center">
-                  <h3 className="text-sm sm:text-base lg:text-lg font-medium text-slate-500 mb-1 leading-tight pr-6 sm:pr-0">{order.customer_name}</h3>
-                  <p className="text-2xl sm:text-3xl lg:text-4xl font-black text-amber-600">{order.drink_name}</p>
+                  <h3 className="text-sm sm:text-base lg:text-lg font-medium text-slate-500 dark:text-slate-400 mb-1 leading-tight pr-6 sm:pr-0">{order.customer_name}</h3>
+                  <div className="flex flex-col">
+                    {settings.isSizeSelectionEnabled && (
+                      <span className={`inline-block px-3 py-1 rounded-md font-black uppercase tracking-widest text-2xl sm:text-3xl lg:text-4xl mb-1 w-fit shadow-sm ${sizeColors[order.size || 'Medium']}`}>
+                        {order.size}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <p className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-800 dark:text-white">{order.drink_name}</p>
+                      <div className="flex items-center gap-1 bg-amber-100 dark:bg-amber-900/30 text-amber-900 dark:text-amber-400 px-3 py-1 rounded-lg border border-amber-200 dark:border-amber-800 shadow-sm">
+                        <Coffee className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <span className="text-lg sm:text-xl font-black">{order.drink_snapshot.espresso_shots}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 
                 <div className="flex-1 flex flex-col gap-2 sm:max-w-sm w-full justify-center">
@@ -157,14 +204,26 @@ export function Assembler() {
                       <span className="uppercase tracking-wider">{order.milk_type}</span>
                     </div>
                   )}
-                  <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex justify-between items-center shadow-sm bg-slate-50 border-2 border-slate-200">
-                    <span className="text-slate-600">Sugar</span>
-                    <span className="text-slate-900 text-lg sm:text-xl">{order.sugar}</span>
+                  <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex justify-between items-center shadow-sm bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 transition-colors">
+                    <span className="text-slate-600 dark:text-slate-400">Sugar</span>
+                    <span className="text-slate-900 dark:text-white text-lg sm:text-xl">{order.sugar}</span>
                   </div>
+                  {order.equal > 0 && (
+                    <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex justify-between items-center shadow-sm bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 transition-colors">
+                      <span className="text-slate-600 dark:text-slate-400">Equal</span>
+                      <span className="text-slate-900 dark:text-white text-lg sm:text-xl">{order.equal}</span>
+                    </div>
+                  )}
+                  {order.syrup && (
+                    <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex justify-between items-center shadow-sm bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-900/50 transition-colors">
+                      <span className="text-amber-600 dark:text-amber-400">Syrup</span>
+                      <span className="text-amber-900 dark:text-amber-200 uppercase tracking-wider">{order.syrup}</span>
+                    </div>
+                  )}
                   {order.notes && (
-                    <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex flex-col sm:flex-row sm:justify-between sm:items-center shadow-sm bg-red-50 border-2 border-red-200 gap-1">
-                      <span className="text-red-500 uppercase tracking-widest text-xs shrink-0">Notes</span>
-                      <span className="text-red-900 text-left sm:text-right leading-tight">{order.notes}</span>
+                    <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex flex-col sm:flex-row sm:justify-between sm:items-center shadow-sm bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-900/50 gap-1 transition-colors">
+                      <span className="text-red-500 dark:text-red-400 uppercase tracking-widest text-xs shrink-0">Notes</span>
+                      <span className="text-red-900 dark:text-red-200 text-left sm:text-right leading-tight">{order.notes}</span>
                     </div>
                   )}
                 </div>
@@ -172,7 +231,7 @@ export function Assembler() {
                 <div className="flex sm:flex-col gap-2 shrink-0 mt-4 sm:mt-0">
                   <button 
                     onClick={() => handleViewRecipe(order)}
-                    className="flex-1 sm:flex-none py-3 px-4 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center transition-colors"
+                    className="flex-1 sm:flex-none py-3 px-4 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center transition-colors"
                   >
                     <FileText className="w-5 h-5 mr-2" />
                     Recipe
@@ -190,9 +249,9 @@ export function Assembler() {
           ))}
 
           {orders.length === 0 && (
-            <div className="w-full h-full flex flex-col items-center justify-center py-10 bg-white rounded-xl border-2 border-dashed border-slate-300 min-h-[200px]">
-              <CheckCircle className="h-12 w-12 text-slate-300 mb-4" />
-              <p className="text-lg text-slate-500 font-medium text-center px-4">No orders for assembly right now.</p>
+            <div className="w-full h-full flex flex-col items-center justify-center py-10 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 min-h-[200px] transition-colors">
+              <CheckCircle className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-4" />
+              <p className="text-lg text-slate-500 dark:text-slate-400 font-medium text-center px-4">No orders for assembly right now.</p>
             </div>
           )}
         </div>

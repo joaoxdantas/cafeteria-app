@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Order, OperationType, MilkType } from '../types';
+import { Order, OperationType, MilkType, AppSettings } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { Coffee, Droplet } from 'lucide-react';
+import { useShop } from '../contexts/ShopContext';
 
 const milkColors: Record<MilkType, string> = {
   'almond': 'bg-red-500 text-white hover:bg-red-600',
@@ -14,14 +15,25 @@ const milkColors: Record<MilkType, string> = {
   'oat': 'bg-amber-200 text-amber-900 hover:bg-amber-300',
 };
 
+const sizeColors: Record<string, string> = {
+  'Piccolo': 'bg-pink-500 text-white',
+  'Small': 'bg-cyan-500 text-white',
+  'Medium': 'bg-emerald-500 text-white',
+  'Large': 'bg-orange-500 text-white',
+};
+
 type OrderWithIndex = Order & { queueIndex: number };
 
 export function Barista() {
+  const { selectedShop } = useShop();
   const [orders, setOrders] = useState<OrderWithIndex[]>([]);
+  const [settings, setSettings] = useState<AppSettings>({ isSizeSelectionEnabled: true });
 
   useEffect(() => {
-    const q = query(collection(db, 'orders'), where('status', '==', 'pending'));
-    const unsubscribe = onSnapshot(
+    if (!selectedShop) return;
+
+    const q = query(collection(db, 'shops', selectedShop.id, 'orders'), where('status', '==', 'pending'));
+    const unsubscribeOrders = onSnapshot(
       q,
       (snapshot) => {
         const ordersData = snapshot.docs.map((doc) => ({
@@ -36,12 +48,27 @@ export function Barista() {
         const ordersWithIndex = ordersData.map((o, i) => ({ ...o, queueIndex: i + 1 }));
         setOrders(ordersWithIndex);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, 'orders')
+      (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/orders`)
     );
-    return () => unsubscribe();
-  }, []);
+
+    const unsubscribeSettings = onSnapshot(
+      doc(db, 'shops', selectedShop.id, 'settings', 'app'),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setSettings(snapshot.data() as AppSettings);
+        }
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, `shops/${selectedShop.id}/settings/app`)
+    );
+
+    return () => {
+      unsubscribeOrders();
+      unsubscribeSettings();
+    };
+  }, [selectedShop]);
 
   const handleGlobalEspressoClick = async () => {
+    if (!selectedShop) return;
     let shotsToSubtract = 2;
     const promises = [];
 
@@ -49,7 +76,7 @@ export function Barista() {
       if (shotsToSubtract <= 0) break;
       if (order.barista_espresso_shots_needed > 0) {
         const subtractFromThisOrder = Math.min(order.barista_espresso_shots_needed, shotsToSubtract);
-        promises.push(updateDoc(doc(db, 'orders', order.id), {
+        promises.push(updateDoc(doc(db, 'shops', selectedShop.id, 'orders', order.id), {
           barista_espresso_shots_needed: order.barista_espresso_shots_needed - subtractFromThisOrder
         }));
         shotsToSubtract -= subtractFromThisOrder;
@@ -60,18 +87,19 @@ export function Barista() {
       try {
         await Promise.all(promises);
       } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, 'orders');
+        handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/orders`);
       }
     }
   };
 
   const handleMilkClick = async (orderId: string) => {
+    if (!selectedShop) return;
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
+      await updateDoc(doc(db, 'shops', selectedShop.id, 'orders', orderId), {
         barista_milk_needed: false
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/orders/${orderId}`);
     }
   };
 
@@ -88,16 +116,16 @@ export function Barista() {
   }, {} as Record<MilkType, number>);
 
   return (
-    <div className="flex-1 flex flex-col h-full">
+    <div className="flex-1 flex flex-col h-full transition-colors duration-300">
       <div className="grid grid-cols-2 gap-2 sm:gap-6 h-full flex-1">
         {/* Espresso Column */}
-        <div className="bg-slate-100 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 overflow-hidden">
-          <h2 className="text-lg sm:text-2xl font-black text-slate-800 mb-2 sm:mb-4 text-center bg-white py-2 rounded-lg shadow-sm flex flex-col">
+        <div className="bg-slate-100 dark:bg-slate-900 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
+          <h2 className="text-lg sm:text-2xl font-black text-slate-800 dark:text-white mb-2 sm:mb-4 text-center bg-white dark:bg-slate-800 py-2 rounded-lg shadow-sm flex flex-col transition-colors">
             <span>ESPRESSO</span>
             {totalPendingShots > 0 && (
               <div className="flex flex-col items-center mt-2">
-                <span className="text-5xl sm:text-7xl font-black text-amber-700 leading-none">{totalPendingShots}</span>
-                <span className="text-sm sm:text-base text-amber-600 font-bold uppercase tracking-widest mt-1">Total Shots</span>
+                <span className="text-5xl sm:text-7xl font-black text-amber-700 dark:text-amber-500 leading-none">{totalPendingShots}</span>
+                <span className="text-sm sm:text-base text-amber-600 dark:text-amber-400 font-bold uppercase tracking-widest mt-1">Total Shots</span>
               </div>
             )}
           </h2>
@@ -107,22 +135,22 @@ export function Barista() {
                 <button
                   key={`espresso-${idx}`}
                   onClick={handleGlobalEspressoClick}
-                  className="w-full bg-amber-900 hover:bg-amber-950 text-white p-4 sm:p-6 rounded-xl shadow-md flex items-center justify-center transition-transform active:scale-95 relative overflow-hidden"
+                  className="w-full bg-amber-900 dark:bg-amber-800 hover:bg-amber-950 dark:hover:bg-amber-700 text-white p-4 sm:p-6 rounded-xl shadow-md flex items-center justify-center transition-transform active:scale-95 relative overflow-hidden"
                 >
                   <Coffee className="w-10 h-10 sm:w-14 sm:h-14 shrink-0" />
                   <span className="text-3xl sm:text-4xl font-black ml-3">= 2</span>
                 </button>
               ))
             ) : (
-              <div className="text-center text-slate-400 py-8 text-sm sm:text-base">No espresso pending</div>
+              <div className="text-center text-slate-400 dark:text-slate-600 py-8 text-sm sm:text-base">No espresso pending</div>
             )}
           </div>
         </div>
 
         {/* Milk Column */}
-        <div className="bg-slate-100 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 overflow-hidden">
-          <div className="bg-white rounded-lg shadow-sm mb-2 sm:mb-4 p-2 flex flex-col">
-            <h2 className="text-lg sm:text-2xl font-black text-slate-800 text-center">MILK</h2>
+        <div className="bg-slate-100 dark:bg-slate-900 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm mb-2 sm:mb-4 p-2 flex flex-col transition-colors">
+            <h2 className="text-lg sm:text-2xl font-black text-slate-800 dark:text-white text-center">MILK</h2>
             {Object.keys(milkCounts).length > 0 && (
               <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2 mt-2">
                 {Object.entries(milkCounts).map(([type, count]) => (
@@ -145,13 +173,25 @@ export function Barista() {
                   #{order.queueIndex}
                 </div>
                 <div className="flex flex-col items-center z-10 relative">
-                  <span className="font-bold text-xl sm:text-2xl uppercase tracking-wider opacity-90">{order.drink_name}</span>
+                  <div className="flex items-center gap-2">
+                    {settings.isSizeSelectionEnabled && (
+                      <span className={`px-2 py-0.5 rounded text-lg sm:text-xl font-black shadow-sm border border-white/20 ${sizeColors[order.size || 'Medium']}`}>
+                        {order.size?.[0] || 'S'}
+                      </span>
+                    )}
+                    <span className="font-bold text-xl sm:text-2xl uppercase tracking-wider opacity-90">{order.drink_name}</span>
+                  </div>
                   <span className="font-normal text-xl sm:text-2xl uppercase tracking-wider mt-1">{order.milk_type}</span>
+                  {order.syrup && (
+                    <span className="font-black text-lg sm:text-xl uppercase tracking-widest mt-1 bg-black/20 px-3 py-0.5 rounded-full">
+                      {order.syrup}
+                    </span>
+                  )}
                 </div>
               </button>
             ))}
             {pendingMilkOrders.length === 0 && (
-              <div className="text-center text-slate-400 py-8 text-sm sm:text-base">No milk pending</div>
+              <div className="text-center text-slate-400 dark:text-slate-600 py-8 text-sm sm:text-base">No milk pending</div>
             )}
           </div>
         </div>
