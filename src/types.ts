@@ -1,3 +1,12 @@
+export type CustomOptionType = 'switch' | 'list' | 'quantity';
+
+export interface CustomOption {
+  id: string;
+  name: string;
+  type: CustomOptionType;
+  listOptions?: string[];
+}
+
 export interface Drink {
   id: string;
   name: string;
@@ -20,6 +29,8 @@ export interface Drink {
     equal?: boolean;
     syrup?: boolean;
     size?: boolean;
+    extra_shot?: boolean;
+    [key: string]: boolean | undefined;
   };
 }
 
@@ -38,7 +49,9 @@ export interface Order {
   notes: string;
   sugar: number;
   equal: number;
+  extra_shot: number;
   syrup: string;
+  custom_options?: Record<string, any>;
   barista_espresso_shots_needed: number;
   barista_milk_needed: boolean;
   status: OrderStatus;
@@ -54,6 +67,8 @@ export interface Shop {
   id: string;
   name: string;
   categories?: string[];
+  customOptions?: CustomOption[];
+  splashImageUrl?: string;
   isMaster?: boolean;
   createdAt: string;
 }
@@ -73,4 +88,3 @@ export interface FirestoreErrorInfo {
   path: string | null;
   authInfo: any;
 }
-

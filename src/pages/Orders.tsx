@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Drink, MilkType, OperationType, DrinkSize, AppSettings } from '../types';
+import { Drink, MilkType, OperationType, DrinkSize, AppSettings, Shop, CustomOption } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
 import { Minus, Plus, CheckCircle2, X, Settings2 } from 'lucide-react';
@@ -12,10 +12,12 @@ interface CartItem {
   milk: MilkType;
   sugar: number;
   equal: number;
+  extraShot: number;
   syrup: string;
   notes: string;
   size: DrinkSize;
   drinkId: string;
+  custom_options: Record<string, any>;
 }
 
 export function Orders() {
@@ -23,6 +25,7 @@ export function Orders() {
   const [categories, setCategories] = useState<string[]>(['Drinks']);
   const [selectedCategory, setSelectedCategory] = useState('Drinks');
   const [drinks, setDrinks] = useState<Drink[]>([]);
+  const [customOptions, setCustomOptions] = useState<CustomOption[]>([]);
   const [customerName, setCustomerName] = useState('');
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const [showSuccess, setShowSuccess] = useState(false);
@@ -34,6 +37,7 @@ export function Orders() {
       milk: MilkType;
       sugar: number;
       equal: number;
+      extraShot: number;
       syrup: string;
       notes: string;
     };
@@ -55,6 +59,7 @@ export function Orders() {
         } else {
           setCategories(['Drinks']);
         }
+        setCustomOptions(data.customOptions || []);
       }
     });
 
@@ -128,7 +133,16 @@ export function Orders() {
     const hasEqual = drink.enabledConfigurations?.equal;
     if (hasSugar || hasEqual) steps.push('sweetener');
     
+    if (drink.enabledConfigurations?.extra_shot) steps.push('extra_shot');
     if (drink.enabledConfigurations?.syrup) steps.push('syrup');
+    
+    // Add custom options
+    customOptions.forEach(opt => {
+      if (drink.enabledConfigurations?.[opt.id]) {
+        steps.push(`custom_${opt.id}`);
+      }
+    });
+
     steps.push('notes');
     return steps;
   };
@@ -144,8 +158,10 @@ export function Orders() {
           milk: 'full cream',
           sugar: 0,
           equal: 0,
+          extraShot: 0,
           syrup: '',
-          notes: ''
+          notes: '',
+          custom_options: {}
         }
       });
     } else {
@@ -154,14 +170,17 @@ export function Orders() {
         milk: 'full cream',
         sugar: 0,
         equal: 0,
+        extraShot: 0,
         syrup: '',
-        notes: ''
+        notes: '',
+        custom_options: {}
       });
     }
   };
 
   const addToCart = (drink: Drink, selections: any) => {
-    const cartKey = `${drink.id}-${selections.size}-${selections.milk}-${selections.sugar}-${selections.equal}-${selections.syrup}-${selections.notes}`;
+    const customOptionsKey = JSON.stringify(selections.custom_options || {});
+    const cartKey = `${drink.id}-${selections.size}-${selections.milk}-${selections.sugar}-${selections.equal}-${selections.extraShot}-${selections.syrup}-${selections.notes}-${customOptionsKey}`;
     setCart(prev => {
       const current = prev[cartKey];
       const nextQty = (current?.quantity || 0) + 1;
@@ -213,7 +232,7 @@ export function Orders() {
     });
   };
 
-  const updateCartCustomization = (cartKey: string, field: 'milk' | 'sugar' | 'equal' | 'syrup' | 'notes', value: any) => {
+  const updateCartCustomization = (cartKey: string, field: 'milk' | 'sugar' | 'equal' | 'extraShot' | 'syrup' | 'notes' | 'custom_options', value: any) => {
     setCart(prev => {
       if (!prev[cartKey]) return prev;
       return {
@@ -240,7 +259,7 @@ export function Orders() {
 
         for (let i = 0; i < item.quantity; i++) {
           const isExtraShotSize = settings.isSizeSelectionEnabled && (item.size === 'Medium' || item.size === 'Large');
-          const finalShots = (drink.espresso_shots || 0) + (isExtraShotSize ? 1 : 0);
+          const finalShots = (drink.espresso_shots || 0) + (isExtraShotSize ? 1 : 0) + (item.extraShot || 0);
           
           // Create a modified snapshot to reflect the extra shot in the recipe and visualizer
           const modifiedSnapshot = {
@@ -249,8 +268,9 @@ export function Orders() {
             layer_order: [...(drink.layer_order || [])]
           };
 
-          // If extra shot added, insert an additional 'espresso' layer into the recipe
-          if (isExtraShotSize) {
+          // If extra shots added (size or manual), insert additional 'espresso' layers into the recipe
+          const totalExtraShots = (isExtraShotSize ? 1 : 0) + (item.extraShot || 0);
+          for (let s = 0; s < totalExtraShots; s++) {
             const firstEspressoIndex = modifiedSnapshot.layer_order.indexOf('espresso');
             if (firstEspressoIndex !== -1) {
               modifiedSnapshot.layer_order.splice(firstEspressoIndex, 0, 'espresso');
@@ -269,7 +289,9 @@ export function Orders() {
             notes: item.notes || '',
             sugar: item.sugar,
             equal: item.equal || 0,
+            extra_shot: item.extraShot || 0,
             syrup: item.syrup || '',
+            custom_options: item.custom_options || {},
             barista_espresso_shots_needed: finalShots,
             barista_milk_needed: drink.leite || false,
             status: 'pending',
@@ -331,7 +353,11 @@ export function Orders() {
                         Step {configModal.step + 1} of {enabledSteps.length}
                       </span>
                       <h4 className="text-xl font-bold text-slate-900 dark:text-white capitalize">
-                        {currentStepType === 'sweetener' ? 'Sweetener' : currentStepType}
+                        {currentStepType === 'sweetener' 
+                          ? 'Sweetener' 
+                          : currentStepType.startsWith('custom_') 
+                            ? customOptions.find(o => o.id === currentStepType.replace('custom_', ''))?.name 
+                            : currentStepType}
                       </h4>
                     </div>
 
@@ -451,6 +477,144 @@ export function Orders() {
                           )}
                         </div>
                       )}
+
+                      {currentStepType === 'extra_shot' && (
+                        <div className="flex flex-col items-center">
+                          <span className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-widest">Extra Espresso Shots</span>
+                          <div className="flex items-center space-x-8">
+                            <button
+                              onClick={() => setConfigModal({
+                                ...configModal,
+                                selections: { 
+                                  ...configModal.selections, 
+                                  extraShot: Math.max(0, configModal.selections.extraShot - 1) 
+                                }
+                              })}
+                              className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
+                            >
+                              <Minus className="w-8 h-8" />
+                            </button>
+                            <span className="text-6xl font-black text-slate-900 dark:text-white w-20 text-center">
+                              {configModal.selections.extraShot}
+                            </span>
+                            <button
+                              onClick={() => setConfigModal({
+                                ...configModal,
+                                selections: { 
+                                  ...configModal.selections, 
+                                  extraShot: configModal.selections.extraShot + 1 
+                                }
+                              })}
+                              className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
+                            >
+                              <Plus className="w-8 h-8" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {currentStepType.startsWith('custom_') && (() => {
+                        const optId = currentStepType.replace('custom_', '');
+                        const opt = customOptions.find(o => o.id === optId);
+                        if (!opt) return null;
+
+                        if (opt.type === 'switch') {
+                          return (
+                            <div className="flex flex-col items-center">
+                              <button
+                                onClick={() => setConfigModal({
+                                  ...configModal,
+                                  selections: {
+                                    ...configModal.selections,
+                                    custom_options: {
+                                      ...configModal.selections.custom_options,
+                                      [optId]: !configModal.selections.custom_options[optId]
+                                    }
+                                  }
+                                })}
+                                className={`w-24 h-24 rounded-2xl flex flex-col items-center justify-center transition-all border-4 ${
+                                  configModal.selections.custom_options[optId]
+                                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
+                                    : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                }`}
+                              >
+                                <span className="text-lg font-black uppercase">{configModal.selections.custom_options[optId] ? 'ON' : 'OFF'}</span>
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (opt.type === 'quantity') {
+                          return (
+                            <div className="flex items-center space-x-8">
+                              <button
+                                onClick={() => setConfigModal({
+                                  ...configModal,
+                                  selections: {
+                                    ...configModal.selections,
+                                    custom_options: {
+                                      ...configModal.selections.custom_options,
+                                      [optId]: Math.max(0, (configModal.selections.custom_options[optId] || 0) - 1)
+                                    }
+                                  }
+                                })}
+                                className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
+                              >
+                                <Minus className="w-8 h-8" />
+                              </button>
+                              <span className="text-6xl font-black text-slate-900 dark:text-white w-20 text-center">
+                                {configModal.selections.custom_options[optId] || 0}
+                              </span>
+                              <button
+                                onClick={() => setConfigModal({
+                                  ...configModal,
+                                  selections: {
+                                    ...configModal.selections,
+                                    custom_options: {
+                                      ...configModal.selections.custom_options,
+                                      [optId]: (configModal.selections.custom_options[optId] || 0) + 1
+                                    }
+                                  }
+                                })}
+                                className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
+                              >
+                                <Plus className="w-8 h-8" />
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (opt.type === 'list') {
+                          return (
+                            <div className="grid grid-cols-2 gap-3 w-full max-h-[300px] overflow-y-auto pr-2">
+                              {opt.listOptions?.map((item) => (
+                                <button
+                                  key={item}
+                                  onClick={() => setConfigModal({
+                                    ...configModal,
+                                    selections: {
+                                      ...configModal.selections,
+                                      custom_options: {
+                                        ...configModal.selections.custom_options,
+                                        [optId]: item
+                                      }
+                                    }
+                                  })}
+                                  className={`py-3 rounded-xl font-bold text-sm transition-all border-2 ${
+                                    configModal.selections.custom_options[optId] === item
+                                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
+                                      : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                  }`}
+                                >
+                                  {item}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        }
+
+                        return null;
+                      })()}
 
                       {currentStepType === 'syrup' && (
                         <div className="grid grid-cols-2 gap-3 w-full max-h-[200px] overflow-y-auto pr-2">

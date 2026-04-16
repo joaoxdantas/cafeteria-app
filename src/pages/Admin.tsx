@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Drink, OperationType, Shop } from '../types';
+import { Drink, OperationType, Shop, CustomOption, CustomOptionType } from '../types';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
 import { OrderHistory } from '../components/OrderHistory';
 import { handleFirestoreError } from '../lib/firestore-error';
-import { Trash2, Plus, ArrowUp, ArrowDown, History, Coffee, Edit2, X, Eye, EyeOff, Beaker, Store, Settings2 } from 'lucide-react';
+import { Trash2, Plus, ArrowUp, ArrowDown, History, Coffee, Edit2, X, Eye, EyeOff, Beaker, Store, Settings2, CheckCircle2, Upload } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useIngredients } from '../hooks/useIngredients';
 import { useShop } from '../contexts/ShopContext';
 
@@ -33,15 +34,30 @@ export function Admin() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [name, setName] = useState('');
   const [layers, setLayers] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'drinks' | 'history' | 'ingredients' | 'shops' | 'configs'>('drinks');
+  const [activeTab, setActiveTab] = useState<'drinks' | 'history' | 'ingredients' | 'shops' | 'configs' | 'settings'>('drinks');
   const [editingDrinkId, setEditingDrinkId] = useState<string | null>(null);
-  const [enabledConfigs, setEnabledConfigs] = useState({
+  const [editingShopName, setEditingShopName] = useState('');
+  const [editingSplashUrl, setEditingSplashUrl] = useState('');
+  const [editingShopIdInList, setEditingShopIdInList] = useState<string | null>(null);
+  const [tempShopName, setTempShopName] = useState('');
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [enabledConfigs, setEnabledConfigs] = useState<Record<string, boolean>>({
     milk: true,
     sugar: true,
-    equal: false,
-    syrup: false,
-    size: true
+    equal: true,
+    syrup: true,
+    size: true,
+    extra_shot: true
   });
+
+  const [customOptions, setCustomOptions] = useState<CustomOption[]>([]);
+  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
+  const [newOptionName, setNewOptionName] = useState('');
+  const [newOptionType, setNewOptionType] = useState<CustomOptionType>('switch');
+  const [newOptionListItems, setNewOptionListItems] = useState<string[]>([]);
+  const [newListItem, setNewListItem] = useState('');
 
   const [syrups, setSyrups] = useState<{id: string, name: string}[]>([]);
   const [newSyrupName, setNewSyrupName] = useState('');
@@ -52,6 +68,9 @@ export function Admin() {
 
   useEffect(() => {
     if (!selectedShop) return;
+
+    setEditingShopName(selectedShop.name);
+    setEditingSplashUrl(selectedShop.splashImageUrl || '');
 
     const unsubscribeShop = onSnapshot(doc(db, 'shops', selectedShop.id), (docSnap) => {
       if (docSnap.exists()) {
@@ -64,6 +83,7 @@ export function Admin() {
         } else {
           setCategories(['Drinks']);
         }
+        setCustomOptions(data.customOptions || []);
       }
     });
 
@@ -148,6 +168,110 @@ export function Admin() {
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 500000) { // ~500KB limit for Firestore safety (base64 overhead)
+      alert("File is too large. Please use an image smaller than 500KB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setEditingSplashUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUpdateShopSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedShop || !editingShopName.trim()) return;
+
+    setIsSaving(true);
+    try {
+      await updateDoc(doc(db, 'shops', selectedShop.id), {
+        name: editingShopName.trim(),
+        splashImageUrl: editingSplashUrl.trim()
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleAddCustomOption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newOptionName || !selectedShop) return;
+    
+    const optionData: CustomOption = {
+      id: editingOptionId || Math.random().toString(36).substr(2, 9),
+      name: newOptionName,
+      type: newOptionType,
+      listOptions: newOptionType === 'list' ? newOptionListItems : undefined
+    };
+
+    try {
+      let updatedOptions;
+      if (editingOptionId) {
+        updatedOptions = customOptions.map(o => o.id === editingOptionId ? optionData : o);
+      } else {
+        updatedOptions = [...customOptions, optionData];
+      }
+
+      await updateDoc(doc(db, 'shops', selectedShop.id), {
+        customOptions: updatedOptions
+      });
+      setNewOptionName('');
+      setNewOptionType('switch');
+      setNewOptionListItems([]);
+      setNewListItem('');
+      setEditingOptionId(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}`);
+    }
+  };
+
+  const handleEditCustomOption = (option: CustomOption) => {
+    setEditingOptionId(option.id);
+    setNewOptionName(option.name);
+    setNewOptionType(option.type);
+    setNewOptionListItems(option.listOptions || []);
+    setNewListItem('');
+  };
+
+  const handleCancelEditOption = () => {
+    setEditingOptionId(null);
+    setNewOptionName('');
+    setNewOptionType('switch');
+    setNewOptionListItems([]);
+    setNewListItem('');
+  };
+
+  const handleDeleteCustomOption = async (optionId: string) => {
+    if (!selectedShop) return;
+    try {
+      await updateDoc(doc(db, 'shops', selectedShop.id), {
+        customOptions: customOptions.filter(o => o.id !== optionId)
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}`);
+    }
+  };
+
+  const addListItem = () => {
+    if (!newListItem.trim()) return;
+    setNewOptionListItems([...newOptionListItems, newListItem.trim()]);
+    setNewListItem('');
+  };
+
+  const removeListItem = (index: number) => {
+    setNewOptionListItems(newOptionListItems.filter((_, i) => i !== index));
+  };
+
   const handleAddSyrup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSyrupName || !selectedShop) return;
@@ -195,6 +319,23 @@ export function Admin() {
       await deleteDoc(doc(db, 'shops', id));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `shops/${id}`);
+    }
+  };
+
+  const handleEditShopName = async (shopId: string, currentName: string) => {
+    setEditingShopIdInList(shopId);
+    setTempShopName(currentName);
+  };
+
+  const submitEditShopName = async (shopId: string) => {
+    if (!tempShopName.trim()) return;
+    try {
+      await updateDoc(doc(db, 'shops', shopId), {
+        name: tempShopName.trim()
+      });
+      setEditingShopIdInList(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${shopId}`);
     }
   };
 
@@ -268,13 +409,18 @@ export function Admin() {
       
       setName('');
       setLayers([]);
-      setEnabledConfigs({
+      const defaults: Record<string, boolean> = {
         milk: true,
         sugar: true,
-        equal: false,
-        syrup: false,
-        size: true
+        equal: true,
+        syrup: true,
+        size: true,
+        extra_shot: true
+      };
+      customOptions.forEach(opt => {
+        defaults[opt.id] = true;
       });
+      setEnabledConfigs(defaults);
     } catch (error) {
       handleFirestoreError(error, editingDrinkId ? OperationType.UPDATE : OperationType.CREATE, `shops/${selectedShop.id}/drinks`);
     }
@@ -284,13 +430,21 @@ export function Admin() {
     setName(drink.name);
     setLayers(drink.layer_order);
     setEditingDrinkId(drink.id);
-    setEnabledConfigs(drink.enabledConfigurations || {
-      milk: drink.leite,
-      sugar: true,
-      equal: false,
-      syrup: false,
-      size: true
+    
+    const configs: Record<string, boolean> = {
+      milk: drink.enabledConfigurations?.milk !== false,
+      sugar: drink.enabledConfigurations?.sugar !== false,
+      equal: !!drink.enabledConfigurations?.equal,
+      syrup: !!drink.enabledConfigurations?.syrup,
+      size: drink.enabledConfigurations?.size !== false,
+      extra_shot: !!drink.enabledConfigurations?.extra_shot
+    };
+    
+    customOptions.forEach(opt => {
+      configs[opt.id] = !!drink.enabledConfigurations?.[opt.id];
     });
+    
+    setEnabledConfigs(configs);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -298,13 +452,18 @@ export function Admin() {
     setName('');
     setLayers([]);
     setEditingDrinkId(null);
-    setEnabledConfigs({
+    const defaults: Record<string, boolean> = {
       milk: true,
       sugar: true,
-      equal: false,
-      syrup: false,
-      size: true
+      equal: true,
+      syrup: true,
+      size: true,
+      extra_shot: true
+    };
+    customOptions.forEach(opt => {
+      defaults[opt.id] = true;
     });
+    setEnabledConfigs(defaults);
   };
 
   const handleDelete = async (id: string) => {
@@ -451,6 +610,15 @@ export function Admin() {
           <Settings2 className="w-5 h-5 mr-2" />
           Config Options
         </button>
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`flex items-center px-4 py-2 rounded-lg font-bold transition-all ${
+            activeTab === 'settings' ? 'bg-amber-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
+          }`}
+        >
+          <Store className="w-5 h-5 mr-2" />
+          Shop Settings
+        </button>
       </div>
 
       {activeTab === 'drinks' && (
@@ -534,18 +702,34 @@ export function Admin() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Enabled Configurations</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800">
-                  {Object.entries(enabledConfigs).map(([key, value]) => (
+                  {['milk', 'sugar', 'equal', 'syrup', 'size', 'extra_shot'].map((key) => (
                     <div key={key} className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase text-slate-600 dark:text-slate-400">{key}</span>
+                      <span className="text-xs font-bold uppercase text-slate-600 dark:text-slate-400">{key.replace('_', ' ')}</span>
                       <button
                         type="button"
-                        onClick={() => setEnabledConfigs(prev => ({ ...prev, [key]: !value }))}
+                        onClick={() => setEnabledConfigs(prev => ({ ...prev, [key]: !prev[key] }))}
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                          value ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-700'
+                          enabledConfigs[key] ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-700'
                         }`}
                       >
                         <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                          value ? 'translate-x-5' : 'translate-x-1'
+                          enabledConfigs[key] ? 'translate-x-5' : 'translate-x-1'
+                        }`} />
+                      </button>
+                    </div>
+                  ))}
+                  {customOptions.map((opt) => (
+                    <div key={opt.id} className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase text-slate-600 dark:text-slate-400 truncate mr-2" title={opt.name}>{opt.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setEnabledConfigs(prev => ({ ...prev, [opt.id]: !prev[opt.id] }))}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                          enabledConfigs[opt.id] ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-700'
+                        }`}
+                      >
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                          enabledConfigs[opt.id] ? 'translate-x-5' : 'translate-x-1'
                         }`} />
                       </button>
                     </div>
@@ -669,6 +853,142 @@ export function Admin() {
         </div>
       )}
 
+      {activeTab === 'settings' && (
+        <div className="max-w-2xl mx-auto">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white dark:bg-slate-900 p-6 sm:p-10 rounded-[2.5rem] shadow-2xl shadow-slate-200/60 dark:shadow-none border border-slate-200 dark:border-slate-800 transition-all relative overflow-hidden"
+          >
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-amber-400 via-amber-600 to-amber-400" />
+            
+            <div className="flex items-center space-x-4 mb-10">
+              <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-2xl shadow-inner">
+                <Store className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Shop Settings</h2>
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Customize your shop's identity and welcome experience</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleUpdateShopSettings} className="space-y-10">
+              <div className="space-y-3">
+                <label className="flex items-center text-xs font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] ml-1">
+                  Shop Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingShopName}
+                  onChange={(e) => setEditingShopName(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-2xl px-5 py-4 text-slate-900 dark:text-white font-bold focus:border-amber-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all shadow-sm"
+                  placeholder="Ex: Downtown Cafe"
+                />
+              </div>
+
+              <div className="space-y-3">
+                <label className="flex items-center text-xs font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] ml-1">
+                  Splash Image
+                </label>
+                <div className="flex flex-col gap-4">
+                  <div className="relative group">
+                    <input
+                      type="url"
+                      value={editingSplashUrl}
+                      onChange={(e) => setEditingSplashUrl(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-2xl px-5 py-4 text-slate-900 dark:text-white font-medium focus:border-amber-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all shadow-sm pr-12"
+                      placeholder="https://example.com/logo.png"
+                    />
+                    {editingSplashUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingSplashUrl('')}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-red-500 transition-colors p-1"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-4">
+                    <div className="h-px flex-1 bg-slate-100 dark:bg-slate-800" />
+                    <span className="text-[10px] font-black text-slate-300 dark:text-slate-600 uppercase tracking-widest">OR</span>
+                    <div className="h-px flex-1 bg-slate-100 dark:bg-slate-800" />
+                  </div>
+
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center justify-center w-full py-4 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-2xl font-bold hover:bg-slate-50 dark:hover:bg-slate-700 transition-all border-2 border-slate-100 dark:border-slate-700 hover:border-amber-500/30 group"
+                  >
+                    <Upload className="w-5 h-5 mr-3 text-amber-500 group-hover:scale-110 transition-transform" />
+                    Upload from Computer
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium ml-1 flex items-center">
+                  <span className="w-1 h-1 bg-amber-500 rounded-full mr-2" />
+                  Recommended: Square or horizontal logo, max 500KB.
+                </p>
+              </div>
+
+              {editingSplashUrl && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-8 bg-slate-50 dark:bg-slate-800/30 rounded-[2rem] border-2 border-dashed border-slate-100 dark:border-slate-800"
+                >
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 text-center">Splash Preview</p>
+                  <div className="aspect-video rounded-2xl overflow-hidden bg-black/5 dark:bg-black/20 flex items-center justify-center shadow-inner relative group">
+                    <img 
+                      src={editingSplashUrl} 
+                      alt="Splash Preview" 
+                      className="max-w-full max-h-full object-contain p-4 drop-shadow-2xl"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </motion.div>
+              )}
+
+              <div className="pt-6">
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="w-full py-5 bg-amber-600 text-white rounded-[1.5rem] font-black text-xl hover:bg-amber-700 disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:cursor-not-allowed transition-all shadow-2xl shadow-amber-600/30 active:scale-[0.97] flex items-center justify-center"
+                >
+                  {isSaving ? (
+                    <>
+                      <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin mr-3" />
+                      Saving Changes...
+                    </>
+                  ) : (
+                    'Save Settings'
+                  )}
+                </button>
+                {saveSuccess && (
+                  <motion.p 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-6 text-center text-green-500 font-black flex items-center justify-center bg-green-50 dark:bg-green-900/10 py-3 rounded-xl"
+                  >
+                    <CheckCircle2 className="w-5 h-5 mr-2" />
+                    Settings saved successfully!
+                  </motion.p>
+                )}
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
       {activeTab === 'history' && <OrderHistory />}
 
       {activeTab === 'shops' && selectedShop?.isMaster && (
@@ -706,17 +1026,58 @@ export function Admin() {
                       <Store className="w-5 h-5 text-slate-500 dark:text-slate-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-slate-900 dark:text-white">{shop.name}</p>
-                      <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${shop.isMaster ? 'bg-amber-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
-                        {shop.isMaster ? 'Master' : 'Standard'}
-                      </span>
+                      {editingShopIdInList === shop.id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={tempShopName}
+                            onChange={(e) => setTempShopName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') submitEditShopName(shop.id);
+                              if (e.key === 'Escape') setEditingShopIdInList(null);
+                            }}
+                            className="text-sm font-medium text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-800 border border-amber-500 rounded px-2 py-1 outline-none"
+                          />
+                          <button 
+                            onClick={() => submitEditShopName(shop.id)}
+                            className="p-1 text-green-600 hover:text-green-700"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => setEditingShopIdInList(null)}
+                            className="p-1 text-slate-400 hover:text-slate-600"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm font-medium text-slate-900 dark:text-white">{shop.name}</p>
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${shop.isMaster ? 'bg-amber-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
+                            {shop.isMaster ? 'Master' : 'Standard'}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
-                  {!shop.isMaster && (
-                    <button onClick={() => handleDeleteShop(shop.id)} className="p-1 text-red-500 hover:text-red-700">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+                  <div className="flex items-center space-x-2">
+                    {editingShopIdInList !== shop.id && (
+                      <button 
+                        onClick={() => handleEditShopName(shop.id, shop.name)}
+                        className="p-1 text-slate-400 hover:text-amber-600 transition-colors"
+                        title="Edit Name"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    {!shop.isMaster && (
+                      <button onClick={() => handleDeleteShop(shop.id)} className="p-1 text-red-500 hover:text-red-700">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -727,30 +1088,138 @@ export function Admin() {
       {activeTab === 'configs' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
           <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
-            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mb-4 sm:mb-6">Manage Syrups</h2>
-            <form onSubmit={handleAddSyrup} className="space-y-4 sm:space-y-6">
+            <div className="flex justify-between items-center mb-4 sm:mb-6">
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
+                {editingOptionId ? 'Edit Config Option' : 'Create Config Option'}
+              </h2>
+              {editingOptionId && (
+                <button onClick={handleCancelEditOption} className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center text-sm font-medium">
+                  <X className="w-4 h-4 mr-1" /> Cancel
+                </button>
+              )}
+            </div>
+            <form onSubmit={handleAddCustomOption} className="space-y-4 sm:space-y-6">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Syrup Name</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Option Name</label>
                 <input
                   type="text"
                   required
-                  value={newSyrupName}
-                  onChange={(e) => setNewSyrupName(e.target.value)}
+                  value={newOptionName}
+                  onChange={(e) => setNewOptionName(e.target.value)}
                   className="mt-1 block w-full rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 sm:text-sm p-2 border transition-colors"
-                  placeholder="Ex: Vanilla"
+                  placeholder="Ex: Temperature, Decaf, etc."
                 />
               </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['switch', 'list', 'quantity'] as CustomOptionType[]).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setNewOptionType(type)}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold border-2 transition-all capitalize ${
+                        newOptionType === type
+                          ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
+                          : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {newOptionType === 'list' && (
+                <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800">
+                  <label className="block text-xs font-bold uppercase text-slate-500">List Options</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newListItem}
+                      onChange={(e) => setNewListItem(e.target.value)}
+                      className="flex-1 rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 sm:text-sm p-2 border"
+                      placeholder="Ex: Hot, Extra Hot"
+                    />
+                    <button
+                      type="button"
+                      onClick={addListItem}
+                      className="p-2 bg-amber-600 text-white rounded-md hover:bg-amber-700"
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {newOptionListItems.map((item, idx) => (
+                      <div key={idx} className="flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-1 rounded-md text-sm">
+                        <span className="text-slate-700 dark:text-slate-300 mr-2">{item}</span>
+                        <button type="button" onClick={() => removeListItem(idx)} className="text-red-500 hover:text-red-700">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 active:scale-95 transition-transform"
               >
-                Add Syrup
+                {editingOptionId ? 'Update Option' : 'Create Option'}
               </button>
             </form>
+
+            <div className="mt-8 pt-8 border-t border-slate-200 dark:border-slate-800">
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mb-4 sm:mb-6">Manage Syrups (Legacy)</h2>
+              <form onSubmit={handleAddSyrup} className="space-y-4 sm:space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Syrup Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={newSyrupName}
+                    onChange={(e) => setNewSyrupName(e.target.value)}
+                    className="mt-1 block w-full rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 sm:text-sm p-2 border transition-colors"
+                    placeholder="Ex: Vanilla, Caramel, etc."
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 active:scale-95 transition-transform"
+                >
+                  Add Syrup
+                </button>
+              </form>
+            </div>
           </div>
 
           <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Available Syrups</h3>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Config Options</h3>
+            <ul className="divide-y divide-slate-200 dark:divide-slate-800 mb-8">
+              {customOptions.map((opt) => (
+                <li key={opt.id} className="py-3 flex justify-between items-center">
+                  <div>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{opt.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 capitalize">{opt.type} {opt.listOptions ? `(${opt.listOptions.length} items)` : ''}</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button onClick={() => handleEditCustomOption(opt)} className="p-1 text-slate-500 hover:text-amber-600">
+                      <Settings2 className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => handleDeleteCustomOption(opt.id)} className="p-1 text-red-500 hover:text-red-700">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </li>
+              ))}
+              {customOptions.length === 0 && (
+                <li className="py-3 text-sm text-slate-500 dark:text-slate-400 text-center">No custom options created.</li>
+              )}
+            </ul>
+
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Syrups (Legacy)</h3>
             <ul className="divide-y divide-slate-200 dark:divide-slate-800">
               {syrups.map((syrup) => (
                 <li key={syrup.id} className="py-2 sm:py-3 flex justify-between items-center">

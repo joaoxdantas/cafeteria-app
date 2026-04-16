@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import { Shop } from '../types';
 
 interface ShopContextType {
@@ -16,12 +18,27 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     const savedShop = localStorage.getItem('selectedShop');
     if (savedShop) {
       try {
-        setSelectedShop(JSON.parse(savedShop));
+        const parsed = JSON.parse(savedShop);
+        setSelectedShop(parsed);
       } catch (e) {
         localStorage.removeItem('selectedShop');
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!selectedShop?.id) return;
+
+    const unsubscribe = onSnapshot(doc(db, 'shops', selectedShop.id), (snapshot) => {
+      if (snapshot.exists()) {
+        const updatedShop = { id: snapshot.id, ...snapshot.data() } as Shop;
+        setSelectedShop(updatedShop);
+        localStorage.setItem('selectedShop', JSON.stringify(updatedShop));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [selectedShop?.id]);
 
   const selectShop = (shop: Shop) => {
     setSelectedShop(shop);

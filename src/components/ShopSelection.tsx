@@ -107,6 +107,10 @@ export function ShopSelection() {
     }
   };
 
+  const handleShopClick = (shop: Shop) => {
+    selectShop(shop);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4 transition-colors duration-300">
       <div className="absolute top-6 right-6">
@@ -128,7 +132,7 @@ export function ShopSelection() {
           >
             <Coffee className="w-12 h-12 text-white" />
           </motion.div>
-          <h1 className="text-5xl font-black text-slate-900 dark:text-white mb-4 tracking-tight">Welcome to AIS Cafe</h1>
+          <h1 className="text-5xl font-black text-slate-900 dark:text-white mb-4 tracking-tight" style={{ fontFamily: 'Inter, sans-serif' }}>Welcome to Cafe Flow</h1>
           <p className="text-slate-500 dark:text-slate-400 text-xl">Select your shop profile to continue</p>
         </div>
 
@@ -141,7 +145,7 @@ export function ShopSelection() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                onClick={() => selectShop(shop)}
+                onClick={() => handleShopClick(shop)}
                 className="group relative bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-3xl p-8 cursor-pointer hover:border-amber-500 transition-all hover:shadow-2xl hover:shadow-amber-500/10"
               >
                 <div className="flex items-start justify-between">
