@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Drink, OperationType, Shop, CustomOption, CustomOptionType } from '../types';
+import { Drink, OperationType, Shop, CustomOption, CustomOptionType, AppSettings } from '../types';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
 import { OrderHistory } from '../components/OrderHistory';
 import { handleFirestoreError } from '../lib/firestore-error';
-import { Trash2, Plus, ArrowUp, ArrowDown, History, Coffee, Edit2, X, Eye, EyeOff, Beaker, Store, Settings2, CheckCircle2, Upload } from 'lucide-react';
-import { motion } from 'motion/react';
-import { useIngredients } from '../hooks/useIngredients';
+import { Trash2, Plus, ArrowUp, ArrowDown, History, Coffee, Edit2, X, Eye, EyeOff, Beaker, Store, Settings2, CheckCircle2, Upload, ArrowDownAz, TrendingUp, Filter, Square, Circle, Grid3X3, Waves, XCircle, GripVertical } from 'lucide-react';
+import { motion, Reorder } from 'motion/react';
+import { useIngredients, IngredientPattern } from '../hooks/useIngredients';
 import { useShop } from '../contexts/ShopContext';
 
 function getContrastYIQ(hexcolor: string){
@@ -42,15 +42,9 @@ export function Admin() {
   const [tempShopName, setTempShopName] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>({ isSizeSelectionEnabled: true });
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [enabledConfigs, setEnabledConfigs] = useState<Record<string, boolean>>({
-    milk: true,
-    sugar: true,
-    equal: true,
-    syrup: true,
-    size: true,
-    extra_shot: true
-  });
+  const [enabledConfigs, setEnabledConfigs] = useState<Record<string, boolean>>({});
 
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([]);
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
@@ -59,12 +53,39 @@ export function Admin() {
   const [newOptionListItems, setNewOptionListItems] = useState<string[]>([]);
   const [newListItem, setNewListItem] = useState('');
 
-  const [syrups, setSyrups] = useState<{id: string, name: string}[]>([]);
-  const [newSyrupName, setNewSyrupName] = useState('');
-
   const [newIngName, setNewIngName] = useState('');
   const [newIngColor, setNewIngColor] = useState('#ff0000');
+  const [newIngPattern, setNewIngPattern] = useState<IngredientPattern>('solid');
+  const [ingredientSortMode, setIngredientSortMode] = useState<'manual' | 'alpha' | 'usage'>('manual');
   const [newShopName, setNewShopName] = useState('');
+
+  const bootstrapLegacyConfigs = async (shopId: string, currentOptions: CustomOption[]) => {
+    const legacyIds = ['legacy_milk', 'legacy_sugar', 'legacy_equal', 'legacy_size', 'legacy_extra_shot'];
+    const missingLegacy = legacyIds.filter(id => !currentOptions.find(opt => opt.id === id));
+    
+    if (missingLegacy.length === 0) return;
+
+    const legacyConfigs: CustomOption[] = [
+      { id: 'legacy_milk', name: 'Milk', type: 'list', listOptions: ['Full Cream', 'Skimmed', 'Almond', 'Oat', 'Soy', 'Lactose Free'] },
+      { id: 'legacy_sugar', name: 'Sugar', type: 'quantity' },
+      { id: 'legacy_equal', name: 'Equal', type: 'quantity' },
+      { id: 'legacy_size', name: 'Size', type: 'list', listOptions: ['Small', 'Medium', 'Large'] },
+      { id: 'legacy_extra_shot', name: 'Extra Shot', type: 'quantity' }
+    ];
+
+    const newOptions = [...currentOptions];
+    legacyConfigs.forEach(config => {
+      if (!newOptions.find(opt => opt.id === config.id)) {
+        newOptions.push(config);
+      }
+    });
+
+    try {
+      await updateDoc(doc(db, 'shops', shopId), { customOptions: newOptions });
+    } catch (error) {
+      console.error('Failed to bootstrap legacy configs:', error);
+    }
+  };
 
   useEffect(() => {
     if (!selectedShop) return;
@@ -75,6 +96,7 @@ export function Admin() {
     const unsubscribeShop = onSnapshot(doc(db, 'shops', selectedShop.id), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as Shop;
+        const currentOptions = data.customOptions || [];
         if (data.categories && data.categories.length > 0) {
           setCategories(data.categories);
           if (!data.categories.includes(selectedCategory)) {
@@ -83,7 +105,8 @@ export function Admin() {
         } else {
           setCategories(['Drinks']);
         }
-        setCustomOptions(data.customOptions || []);
+        setCustomOptions(currentOptions);
+        bootstrapLegacyConfigs(selectedShop.id, currentOptions);
       }
     });
 
@@ -106,18 +129,6 @@ export function Admin() {
       (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/drinks`)
     );
 
-    const unsubscribeSyrups = onSnapshot(
-      collection(db, 'shops', selectedShop.id, 'syrups'),
-      (snapshot) => {
-        const syrupsData = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as {id: string, name: string}[];
-        setSyrups(syrupsData);
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/syrups`)
-    );
-
     let unsubscribeShops = () => {};
     if (selectedShop.isMaster) {
       const q = query(collection(db, 'shops'), orderBy('createdAt', 'asc'));
@@ -134,13 +145,107 @@ export function Admin() {
       );
     }
 
+    const unsubscribeSettings = onSnapshot(
+      doc(db, 'shops', selectedShop.id, 'settings', 'app'),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setSettings(snapshot.data() as AppSettings);
+        }
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, `shops/${selectedShop.id}/settings/app`)
+    );
+
     return () => {
       unsubscribeShop();
       unsubscribeDrinks();
-      unsubscribeSyrups();
       unsubscribeShops();
+      unsubscribeSettings();
     };
   }, [selectedShop, selectedCategory]);
+
+  const [confirmBulk, setConfirmBulk] = useState(false);
+
+  const bulkEnableAllOptions = async () => {
+    if (!selectedShop || drinks.length === 0 || customOptions.length === 0) return;
+    
+    if (!confirmBulk) {
+      setConfirmBulk(true);
+      setTimeout(() => setConfirmBulk(false), 3000);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const allEnabled: Record<string, boolean> = {};
+      customOptions.forEach(opt => {
+        allEnabled[opt.id] = true;
+      });
+
+      const promises = drinks.map(drink => 
+        updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', drink.id), {
+          enabledConfigurations: allEnabled
+        })
+      );
+
+      await Promise.all(promises);
+      setSaveSuccess(true);
+      setConfirmBulk(false);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/drinks`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const bulkToggleOptionForAllDrinks = async (optionId: string, enabled: boolean) => {
+    if (!selectedShop || drinks.length === 0) return;
+    
+    setIsSaving(true);
+    try {
+      const promises = drinks.map(drink => {
+        const currentConfigs = { ...(drink.enabledConfigurations || {}) };
+        // Clean up legacy key maps if we are toggling a legacy one
+        const legacyMap: Record<string, string> = {
+          'legacy_milk': 'milk',
+          'legacy_sugar': 'sugar',
+          'legacy_equal': 'equal',
+          'legacy_size': 'size',
+          'legacy_extra_shot': 'extra_shot'
+        };
+        
+        currentConfigs[optionId] = enabled;
+        if (legacyMap[optionId]) {
+          currentConfigs[legacyMap[optionId]] = enabled;
+        }
+
+        return updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', drink.id), {
+          enabledConfigurations: currentConfigs
+        });
+      });
+
+      await Promise.all(promises);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/drinks`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleReorderOptions = async (newOrder: CustomOption[]) => {
+    if (!selectedShop) return;
+    setCustomOptions(newOrder);
+    
+    try {
+      await updateDoc(doc(db, 'shops', selectedShop.id), {
+        customOptions: newOrder
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}`);
+    }
+  };
 
   const handleNewCategory = () => {
     setNewCategoryName('');
@@ -184,6 +289,17 @@ export function Admin() {
     reader.readAsDataURL(file);
   };
 
+  const toggleSizeSelection = async () => {
+    if (!selectedShop) return;
+    try {
+      await setDoc(doc(db, 'shops', selectedShop.id, 'settings', 'app'), {
+        isSizeSelectionEnabled: !settings.isSizeSelectionEnabled
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/settings/app`);
+    }
+  };
+
   const handleUpdateShopSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedShop || !editingShopName.trim()) return;
@@ -207,12 +323,15 @@ export function Admin() {
     e.preventDefault();
     if (!newOptionName || !selectedShop) return;
     
-    const optionData: CustomOption = {
+    const optionData: any = {
       id: editingOptionId || Math.random().toString(36).substr(2, 9),
-      name: newOptionName,
+      name: newOptionName.trim(),
       type: newOptionType,
-      listOptions: newOptionType === 'list' ? newOptionListItems : undefined
     };
+
+    if (newOptionType === 'list') {
+      optionData.listOptions = newOptionListItems;
+    }
 
     try {
       let updatedOptions;
@@ -270,28 +389,6 @@ export function Admin() {
 
   const removeListItem = (index: number) => {
     setNewOptionListItems(newOptionListItems.filter((_, i) => i !== index));
-  };
-
-  const handleAddSyrup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSyrupName || !selectedShop) return;
-    try {
-      await addDoc(collection(db, 'shops', selectedShop.id, 'syrups'), {
-        name: newSyrupName
-      });
-      setNewSyrupName('');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `shops/${selectedShop.id}/syrups`);
-    }
-  };
-
-  const handleDeleteSyrup = async (id: string) => {
-    if (!selectedShop) return;
-    try {
-      await deleteDoc(doc(db, 'shops', selectedShop.id, 'syrups', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `shops/${selectedShop.id}/syrups/${id}`);
-    }
   };
 
   const handleAddShop = async (e: React.FormEvent) => {
@@ -409,14 +506,7 @@ export function Admin() {
       
       setName('');
       setLayers([]);
-      const defaults: Record<string, boolean> = {
-        milk: true,
-        sugar: true,
-        equal: true,
-        syrup: true,
-        size: true,
-        extra_shot: true
-      };
+      const defaults: Record<string, boolean> = {};
       customOptions.forEach(opt => {
         defaults[opt.id] = true;
       });
@@ -431,17 +521,25 @@ export function Admin() {
     setLayers(drink.layer_order);
     setEditingDrinkId(drink.id);
     
-    const configs: Record<string, boolean> = {
-      milk: drink.enabledConfigurations?.milk !== false,
-      sugar: drink.enabledConfigurations?.sugar !== false,
-      equal: !!drink.enabledConfigurations?.equal,
-      syrup: !!drink.enabledConfigurations?.syrup,
-      size: drink.enabledConfigurations?.size !== false,
-      extra_shot: !!drink.enabledConfigurations?.extra_shot
-    };
+    const configs: Record<string, boolean> = {};
     
     customOptions.forEach(opt => {
-      configs[opt.id] = !!drink.enabledConfigurations?.[opt.id];
+      // Map old keys to new legacy IDs for backward compatibility if needed, 
+      // but primarily use opt.id which we bootstrapped
+      const legacyMap: Record<string, string> = {
+        'milk': 'legacy_milk',
+        'sugar': 'legacy_sugar',
+        'equal': 'legacy_equal',
+        'size': 'legacy_size',
+        'extra_shot': 'legacy_extra_shot'
+      };
+      
+      const oldKey = Object.keys(legacyMap).find(k => legacyMap[k] === opt.id);
+      if (oldKey && drink.enabledConfigurations?.[oldKey] !== undefined) {
+        configs[opt.id] = drink.enabledConfigurations[oldKey] !== false;
+      } else {
+        configs[opt.id] = !!drink.enabledConfigurations?.[opt.id];
+      }
     });
     
     setEnabledConfigs(configs);
@@ -452,14 +550,7 @@ export function Admin() {
     setName('');
     setLayers([]);
     setEditingDrinkId(null);
-    const defaults: Record<string, boolean> = {
-      milk: true,
-      sugar: true,
-      equal: true,
-      syrup: true,
-      size: true,
-      extra_shot: true
-    };
+    const defaults: Record<string, boolean> = {};
     customOptions.forEach(opt => {
       defaults[opt.id] = true;
     });
@@ -518,9 +609,11 @@ export function Admin() {
       await setDoc(doc(db, 'shops', selectedShop.id, 'ingredients', id), {
         name: newIngName,
         color: newIngColor,
+        pattern: newIngPattern,
         category: selectedCategory
       });
       setNewIngName('');
+      setNewIngPattern('solid');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `shops/${selectedShop.id}/ingredients`);
     }
@@ -535,33 +628,32 @@ export function Admin() {
     }
   };
 
+  const ingredientUsage = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    drinks.forEach(drink => {
+      drink.layer_order.forEach(layerId => {
+        counts[layerId] = (counts[layerId] || 0) + 1;
+      });
+    });
+    return counts;
+  }, [drinks]);
+
   const displayedDrinks = drinks.filter(d => (d.category || 'Drinks') === selectedCategory);
-  const displayedIngredients = ingredients.filter(ing => (ing.category || 'Drinks') === selectedCategory);
+  
+  const displayedIngredients = React.useMemo(() => {
+    let list = ingredients.filter(ing => (ing.category || 'Drinks') === selectedCategory);
+    
+    if (ingredientSortMode === 'alpha') {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    } else if (ingredientSortMode === 'usage') {
+      list = [...list].sort((a, b) => (ingredientUsage[b.id] || 0) - (ingredientUsage[a.id] || 0));
+    }
+    
+    return list;
+  }, [ingredients, selectedCategory, ingredientSortMode, ingredientUsage]);
 
   return (
     <div className="max-w-6xl mx-auto transition-colors duration-300">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 gap-4">
-        <div className="flex items-center space-x-4">
-          <span className="font-bold text-slate-700 dark:text-slate-300">Category:</span>
-          <select 
-            value={selectedCategory} 
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-amber-500 outline-none"
-          >
-            {categories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
-        <button 
-          onClick={handleNewCategory}
-          className="flex items-center justify-center px-4 py-2 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded-lg font-bold hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          New Category
-        </button>
-      </div>
-
       <div className="flex flex-wrap gap-2 sm:gap-4 mb-6">
         <button
           onClick={() => setActiveTab('drinks')}
@@ -620,6 +712,30 @@ export function Admin() {
           Shop Settings
         </button>
       </div>
+
+      {(activeTab === 'drinks' || activeTab === 'ingredients') && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 gap-4">
+          <div className="flex items-center space-x-4">
+            <span className="font-bold text-slate-700 dark:text-slate-300">Category:</span>
+            <select 
+              value={selectedCategory} 
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-amber-500 outline-none"
+            >
+              {categories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+          <button 
+            onClick={handleNewCategory}
+            className="flex items-center justify-center px-4 py-2 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded-lg font-bold hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Category
+          </button>
+        </div>
+      )}
 
       {activeTab === 'drinks' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
@@ -701,30 +817,13 @@ export function Admin() {
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Enabled Configurations</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800">
-                  {['milk', 'sugar', 'equal', 'syrup', 'size', 'extra_shot'].map((key) => (
-                    <div key={key} className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase text-slate-600 dark:text-slate-400">{key.replace('_', ' ')}</span>
-                      <button
-                        type="button"
-                        onClick={() => setEnabledConfigs(prev => ({ ...prev, [key]: !prev[key] }))}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                          enabledConfigs[key] ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-700'
-                        }`}
-                      >
-                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                          enabledConfigs[key] ? 'translate-x-5' : 'translate-x-1'
-                        }`} />
-                      </button>
-                    </div>
-                  ))}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-[#283750]">
                   {customOptions.map((opt) => (
-                    <div key={opt.id} className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase text-slate-600 dark:text-slate-400 truncate mr-2" title={opt.name}>{opt.name}</span>
+                    <div key={opt.id} className="flex items-center justify-center gap-3 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-[#283750] rounded-xl shadow-sm">
                       <button
                         type="button"
                         onClick={() => setEnabledConfigs(prev => ({ ...prev, [opt.id]: !prev[opt.id] }))}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
                           enabledConfigs[opt.id] ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-700'
                         }`}
                       >
@@ -732,6 +831,7 @@ export function Admin() {
                           enabledConfigs[opt.id] ? 'translate-x-5' : 'translate-x-1'
                         }`} />
                       </button>
+                      <span className="text-xs font-bold uppercase text-slate-600 dark:text-slate-400 truncate" title={opt.name}>{opt.name}</span>
                     </div>
                   ))}
                 </div>
@@ -822,6 +922,36 @@ export function Admin() {
                   <span className="text-sm text-slate-500 dark:text-slate-400">{newIngColor}</span>
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Pattern</label>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-2">
+                  {(['solid', 'dots', 'lines', 'checkered', 'bubbles', 'sprinkles', 'ice', 'biscuit', 'foam'] as IngredientPattern[]).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setNewIngPattern(p)}
+                      className={`flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-all ${
+                        newIngPattern === p
+                          ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
+                          : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      <div className="mb-1">
+                        {p === 'solid' && <Square className="w-4 h-4" />}
+                        {p === 'dots' && <div className="grid grid-cols-2 gap-0.5"><div className="w-1.5 h-1.5 rounded-full bg-current"/><div className="w-1.5 h-1.5 rounded-full bg-current"/><div className="w-1.5 h-1.5 rounded-full bg-current"/><div className="w-1.5 h-1.5 rounded-full bg-current"/></div>}
+                        {p === 'lines' && <div className="flex flex-col gap-0.5"><div className="w-4 h-0.5 bg-current"/><div className="w-4 h-0.5 bg-current"/><div className="w-4 h-0.5 bg-current"/></div>}
+                        {p === 'bubbles' && <Waves className="w-4 h-4" />}
+                        {p === 'checkered' && <Grid3X3 className="w-4 h-4" />}
+                        {p === 'sprinkles' && <div className="flex gap-0.5"><div className="w-1 h-1 rounded-full bg-red-400"/><div className="w-1 h-1 rounded-full bg-blue-400"/><div className="w-1 h-1 rounded-full bg-green-400"/></div>}
+                        {p === 'ice' && <div className="w-3 h-3 border border-current rotate-12"/>}
+                        {p === 'biscuit' && <div className="w-4 h-1.5 bg-amber-800 rounded-sm"/>}
+                        {p === 'foam' && <Circle className="w-4 h-4 opacity-50" />}
+                      </div>
+                      <span className="text-[10px] font-bold uppercase truncate w-full text-center">{p}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
                 type="submit"
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 active:scale-95 transition-transform"
@@ -832,22 +962,73 @@ export function Admin() {
           </div>
 
           <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Available Ingredients</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Available Ingredients</h3>
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
+                <button
+                  onClick={() => setIngredientSortMode('manual')}
+                  className={`p-1.5 rounded-md text-[10px] font-black uppercase tracking-wider flex items-center transition-all ${
+                    ingredientSortMode === 'manual' ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                  title="Default Sort"
+                >
+                  <Filter className="w-3.5 h-3.5 mr-1" />
+                  Default
+                </button>
+                <button
+                  onClick={() => setIngredientSortMode('alpha')}
+                  className={`p-1.5 rounded-md text-[10px] font-black uppercase tracking-wider flex items-center transition-all ${
+                    ingredientSortMode === 'alpha' ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                  title="Alphabetical Sort"
+                >
+                  <ArrowDownAz className="w-3.5 h-3.5 mr-1" />
+                  A-Z
+                </button>
+                <button
+                  onClick={() => setIngredientSortMode('usage')}
+                  className={`p-1.5 rounded-md text-[10px] font-black uppercase tracking-wider flex items-center transition-all ${
+                    ingredientSortMode === 'usage' ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                  title="Sort by Usage in Recipes"
+                >
+                  <TrendingUp className="w-3.5 h-3.5 mr-1" />
+                  Used
+                </button>
+              </div>
+            </div>
             <ul className="divide-y divide-slate-200 dark:divide-slate-800 max-h-[500px] overflow-y-auto pr-2">
               {displayedIngredients.map((ing) => (
-                <li key={ing.id} className="py-2 sm:py-3 flex justify-between items-center">
+                <li key={ing.id} className="py-2 sm:py-3 flex justify-between items-center group">
                   <div className="flex items-center space-x-3">
                     <div 
                       className="w-6 h-6 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm" 
                       style={{ backgroundColor: ing.color === 'transparent' ? '#f8fafc' : ing.color }}
                     />
-                    <p className="text-sm font-medium text-slate-900 dark:text-white">{ing.name}</p>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white">{ing.name}</p>
+                        {ing.pattern && ing.pattern !== 'solid' && (
+                          <span className="text-[9px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-500 font-black uppercase tracking-tighter border border-slate-200 dark:border-slate-700">
+                            {ing.pattern}
+                          </span>
+                        )}
+                      </div>
+                      {ingredientSortMode === 'usage' && (
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">
+                          In {ingredientUsage[ing.id] || 0} recipes
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <button onClick={() => handleDeleteIngredient(ing.id)} className="p-1 text-red-500 hover:text-red-700">
+                  <button onClick={() => handleDeleteIngredient(ing.id)} className="p-1 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </li>
               ))}
+              {displayedIngredients.length === 0 && (
+                <li className="py-8 text-center text-slate-400 text-sm">No ingredients in this category.</li>
+              )}
             </ul>
           </div>
         </div>
@@ -937,6 +1118,33 @@ export function Admin() {
                   <span className="w-1 h-1 bg-amber-500 rounded-full mr-2" />
                   Recommended: Square or horizontal logo, max 500KB.
                 </p>
+              </div>
+
+              <div className="space-y-4 p-6 bg-slate-50 dark:bg-slate-800/30 rounded-3xl border border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm">
+                      <Settings2 className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">Enable Size Selection</p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">Show size options for all drinks globally</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleSizeSelection}
+                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 ${
+                      settings.isSizeSelectionEnabled ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        settings.isSizeSelectionEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
 
               {editingSplashUrl && (
@@ -1170,41 +1378,59 @@ export function Admin() {
                 {editingOptionId ? 'Update Option' : 'Create Option'}
               </button>
             </form>
-
-            <div className="mt-8 pt-8 border-t border-slate-200 dark:border-slate-800">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mb-4 sm:mb-6">Manage Syrups (Legacy)</h2>
-              <form onSubmit={handleAddSyrup} className="space-y-4 sm:space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Syrup Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={newSyrupName}
-                    onChange={(e) => setNewSyrupName(e.target.value)}
-                    className="mt-1 block w-full rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 sm:text-sm p-2 border transition-colors"
-                    placeholder="Ex: Vanilla, Caramel, etc."
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 active:scale-95 transition-transform"
-                >
-                  Add Syrup
-                </button>
-              </form>
-            </div>
           </div>
 
           <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Config Options</h3>
-            <ul className="divide-y divide-slate-200 dark:divide-slate-800 mb-8">
+            <div className="flex flex-col gap-1 mb-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Config Options</h3>
+                <button 
+                  onClick={bulkEnableAllOptions}
+                  disabled={isSaving || drinks.length === 0}
+                  className={`text-xs font-bold uppercase tracking-wider disabled:opacity-50 flex items-center gap-1 px-3 py-1.5 rounded-lg border transition-all hover:scale-105 ${
+                    confirmBulk 
+                      ? 'bg-red-50 dark:bg-red-900/20 text-red-600 border-red-200 dark:border-red-800' 
+                      : 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 border-amber-200 dark:border-amber-800'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  {confirmBulk ? 'Click to Confirm' : 'Enable All for All Drinks'}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 italic">Drag to reorder. The list order determines the sequence of screens during the ordering process.</p>
+            </div>
+            
+            <Reorder.Group axis="y" values={customOptions} onReorder={handleReorderOptions} className="divide-y divide-slate-200 dark:divide-slate-800">
               {customOptions.map((opt) => (
-                <li key={opt.id} className="py-3 flex justify-between items-center">
-                  <div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">{opt.name}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 capitalize">{opt.type} {opt.listOptions ? `(${opt.listOptions.length} items)` : ''}</p>
+                <Reorder.Item key={opt.id} value={opt} className="py-3 flex justify-between items-center bg-white dark:bg-slate-900">
+                  <div className="flex items-center flex-1">
+                    <div className="cursor-grab active:cursor-grabbing p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 mr-2">
+                      <GripVertical className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">{opt.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 capitalize">{opt.type} {opt.listOptions ? `(${opt.listOptions.length} items)` : ''}</p>
+                    </div>
                   </div>
                   <div className="flex items-center space-x-2">
+                    <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-slate-700 mr-2">
+                      <button 
+                        onClick={() => bulkToggleOptionForAllDrinks(opt.id, true)}
+                        title="Enable for all drinks"
+                        disabled={isSaving}
+                        className="p-1.5 text-slate-400 hover:text-emerald-500 transition-colors"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => bulkToggleOptionForAllDrinks(opt.id, false)}
+                        title="Disable for all drinks"
+                        disabled={isSaving}
+                        className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                    </div>
                     <button onClick={() => handleEditCustomOption(opt)} className="p-1 text-slate-500 hover:text-amber-600">
                       <Settings2 className="w-4 h-4" />
                     </button>
@@ -1212,27 +1438,12 @@ export function Admin() {
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                </li>
+                </Reorder.Item>
               ))}
               {customOptions.length === 0 && (
                 <li className="py-3 text-sm text-slate-500 dark:text-slate-400 text-center">No custom options created.</li>
               )}
-            </ul>
-
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Syrups (Legacy)</h3>
-            <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-              {syrups.map((syrup) => (
-                <li key={syrup.id} className="py-2 sm:py-3 flex justify-between items-center">
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">{syrup.name}</p>
-                  <button onClick={() => handleDeleteSyrup(syrup.id)} className="p-1 text-red-500 hover:text-red-700">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </li>
-              ))}
-              {syrups.length === 0 && (
-                <li className="py-3 text-sm text-slate-500 dark:text-slate-400 text-center">No syrups registered.</li>
-              )}
-            </ul>
+            </Reorder.Group>
           </div>
         </div>
       )}

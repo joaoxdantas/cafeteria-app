@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Order, OperationType, MilkType, AppSettings } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
-import { Coffee, Droplet } from 'lucide-react';
+import { Coffee, Droplet, Volume2, VolumeX } from 'lucide-react';
 import { useShop } from '../contexts/ShopContext';
 
 const milkColors: Record<MilkType, string> = {
@@ -28,11 +28,52 @@ export function Barista() {
   const { selectedShop } = useShop();
   const [orders, setOrders] = useState<OrderWithIndex[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ isSizeSelectionEnabled: true });
+  const [audioEnabled, setAudioEnabled] = useState(() => {
+    const saved = localStorage.getItem('barista_audio_enabled');
+    return saved === null ? true : saved === 'true';
+  });
+  const lastProcessedOrderId = useRef<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('barista_audio_enabled', audioEnabled.toString());
+  }, [audioEnabled]);
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      // newest order is at the end of the sorted array
+      const newestOrder = orders[orders.length - 1];
+      
+      if (lastProcessedOrderId.current === null) {
+        lastProcessedOrderId.current = newestOrder.id;
+        return;
+      }
+
+      if (audioEnabled && newestOrder.id !== lastProcessedOrderId.current) {
+        // Only play if the new order is actually newer than our last seen
+        const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+        audio.play().catch(e => console.log('Audio notification blocked by browser. Click anywhere to enable.', e));
+        lastProcessedOrderId.current = newestOrder.id;
+      }
+    }
+  }, [orders, audioEnabled]);
+
+  const toggleAudio = () => {
+    const nextState = !audioEnabled;
+    setAudioEnabled(nextState);
+    if (nextState) {
+      // Play a test sound to "unlock" audio in the browser
+      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+      audio.play().catch(e => console.log('Audio test failed:', e));
+    }
+  };
 
   useEffect(() => {
     if (!selectedShop) return;
 
-    const q = query(collection(db, 'shops', selectedShop.id, 'orders'), where('status', '==', 'pending'));
+    const q = query(
+      collection(db, 'shops', selectedShop.id, 'orders'), 
+      where('status', 'in', ['pending', 'preparing'])
+    );
     const unsubscribeOrders = onSnapshot(
       q,
       (snapshot) => {
@@ -117,6 +158,22 @@ export function Barista() {
 
   return (
     <div className="flex-1 flex flex-col h-full transition-colors duration-300">
+      <div className="flex justify-end mb-4 px-2">
+        <button
+          onClick={toggleAudio}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${
+            audioEnabled 
+              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800 shadow-sm hover:translate-y-[-1px]' 
+              : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500 border border-slate-200 dark:border-slate-700 grayscale'
+          }`}
+        >
+          {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+          <div className="flex flex-col items-start leading-none">
+            <span className="text-[10px] uppercase font-black opacity-60">Barista Alerts</span>
+            <span className="text-sm uppercase tracking-wider">{audioEnabled ? 'Sound ON' : 'Sound OFF'}</span>
+          </div>
+        </button>
+      </div>
       <div className="grid grid-cols-2 gap-2 sm:gap-6 h-full flex-1">
         {/* Espresso Column */}
         <div className="bg-slate-100 dark:bg-slate-900 rounded-xl p-2 sm:p-4 flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
@@ -181,12 +238,22 @@ export function Barista() {
                     )}
                     <span className="font-bold text-xl sm:text-2xl uppercase tracking-wider opacity-90">{order.drink_name}</span>
                   </div>
-                  <span className="font-normal text-xl sm:text-2xl uppercase tracking-wider mt-1">{order.milk_type}</span>
-                  {order.syrup && (
-                    <span className="font-black text-lg sm:text-xl uppercase tracking-widest mt-1 bg-black/20 px-3 py-0.5 rounded-full">
-                      {order.syrup}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="font-normal text-xl sm:text-2xl uppercase tracking-wider">{order.milk_type}</span>
+                    {order.extra_shot > 0 && (
+                      <span className="bg-purple-600 text-white px-2 py-0.5 rounded font-black text-xs uppercase animate-pulse">
+                        Extra Shot
+                      </span>
+                    )}
+                  </div>
+                  {order.custom_options && Object.entries(order.custom_options).map(([key, value]) => {
+                    if (!value) return null;
+                    return (
+                      <span key={key} className="font-black text-xs sm:text-sm uppercase tracking-widest mt-1 bg-white/20 px-2 py-0.5 rounded-md border border-white/10">
+                        {key.replace(/_/g, ' ')}: {typeof value === 'boolean' ? 'YES' : value}
+                      </span>
+                    );
+                  })}
                 </div>
               </button>
             ))}

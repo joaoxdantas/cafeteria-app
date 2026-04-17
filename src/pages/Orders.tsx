@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { Drink, MilkType, OperationType, DrinkSize, AppSettings, Shop, CustomOption } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
+import { motion } from 'motion/react';
 import { Minus, Plus, CheckCircle2, X, Settings2 } from 'lucide-react';
 import { useShop } from '../contexts/ShopContext';
 
@@ -13,7 +14,6 @@ interface CartItem {
   sugar: number;
   equal: number;
   extraShot: number;
-  syrup: string;
   notes: string;
   size: DrinkSize;
   drinkId: string;
@@ -27,22 +27,18 @@ export function Orders() {
   const [drinks, setDrinks] = useState<Drink[]>([]);
   const [customOptions, setCustomOptions] = useState<CustomOption[]>([]);
   const [customerName, setCustomerName] = useState('');
+  const [tableNumber, setTableNumber] = useState('');
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const [showSuccess, setShowSuccess] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [configModal, setConfigModal] = useState<{
     drink: Drink;
     step: number;
     selections: {
-      size: DrinkSize;
-      milk: MilkType;
-      sugar: number;
-      equal: number;
-      extraShot: number;
-      syrup: string;
       notes: string;
+      custom_options: Record<string, any>;
     };
   } | null>(null);
-  const [syrups, setSyrups] = useState<{id: string, name: string}[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ isSizeSelectionEnabled: true });
 
   useEffect(() => {
@@ -83,18 +79,6 @@ export function Orders() {
       (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/drinks`)
     );
 
-    const unsubscribeSyrups = onSnapshot(
-      collection(db, 'shops', selectedShop.id, 'syrups'),
-      (snapshot) => {
-        const syrupsData = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as {id: string, name: string}[];
-        setSyrups(syrupsData);
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/syrups`)
-    );
-
     const unsubscribeSettings = onSnapshot(
       doc(db, 'shops', selectedShop.id, 'settings', 'app'),
       (snapshot) => {
@@ -108,7 +92,6 @@ export function Orders() {
     return () => {
       unsubscribeShop();
       unsubscribeDrinks();
-      unsubscribeSyrups();
       unsubscribeSettings();
     };
   }, [selectedShop, selectedCategory]);
@@ -126,20 +109,22 @@ export function Orders() {
 
   const getEnabledSteps = (drink: Drink) => {
     const steps = [];
-    if (settings.isSizeSelectionEnabled && drink.enabledConfigurations?.size !== false) steps.push('size');
-    if (drink.enabledConfigurations?.milk !== false && drink.leite) steps.push('milk');
-    
-    const hasSugar = drink.enabledConfigurations?.sugar !== false;
-    const hasEqual = drink.enabledConfigurations?.equal;
-    if (hasSugar || hasEqual) steps.push('sweetener');
-    
-    if (drink.enabledConfigurations?.extra_shot) steps.push('extra_shot');
-    if (drink.enabledConfigurations?.syrup) steps.push('syrup');
-    
+
     // Add custom options
+    let addedSweetener = false;
     customOptions.forEach(opt => {
+      // Check if global size selection is disabled
+      if (opt.id === 'legacy_size' && !settings.isSizeSelectionEnabled) return;
+
       if (drink.enabledConfigurations?.[opt.id]) {
-        steps.push(`custom_${opt.id}`);
+        if (opt.id === 'legacy_sugar' || opt.id === 'legacy_equal') {
+          if (!addedSweetener) {
+            steps.push('sweetener');
+            addedSweetener = true;
+          }
+        } else {
+          steps.push(`custom_${opt.id}`);
+        }
       }
     });
 
@@ -149,38 +134,39 @@ export function Orders() {
 
   const handleDrinkClick = (drink: Drink) => {
     const enabledSteps = getEnabledSteps(drink);
+    
+    const customOptionsDefaults: Record<string, any> = {};
+    customOptions.forEach(opt => {
+      if (opt.id === 'legacy_milk') customOptionsDefaults[opt.id] = 'Full Cream';
+      else if (opt.id === 'legacy_size') customOptionsDefaults[opt.id] = 'Medium';
+      else if (opt.id === 'legacy_sugar') customOptionsDefaults[opt.id] = 0;
+      else if (opt.id === 'legacy_equal') customOptionsDefaults[opt.id] = 0;
+      else if (opt.id === 'legacy_extra_shot') customOptionsDefaults[opt.id] = 0;
+      else if (opt.type === 'switch') customOptionsDefaults[opt.id] = false;
+      else if (opt.type === 'quantity') customOptionsDefaults[opt.id] = 0;
+    });
+
     if (enabledSteps.length > 1 || (enabledSteps.length === 1 && enabledSteps[0] !== 'notes')) {
       setConfigModal({
         drink,
         step: 0,
         selections: {
-          size: 'Medium',
-          milk: 'full cream',
-          sugar: 0,
-          equal: 0,
-          extraShot: 0,
-          syrup: '',
           notes: '',
-          custom_options: {}
+          custom_options: customOptionsDefaults
         }
       });
     } else {
       addToCart(drink, {
-        size: 'Medium',
-        milk: 'full cream',
-        sugar: 0,
-        equal: 0,
-        extraShot: 0,
-        syrup: '',
         notes: '',
-        custom_options: {}
+        custom_options: customOptionsDefaults
       });
     }
   };
 
   const addToCart = (drink: Drink, selections: any) => {
     const customOptionsKey = JSON.stringify(selections.custom_options || {});
-    const cartKey = `${drink.id}-${selections.size}-${selections.milk}-${selections.sugar}-${selections.equal}-${selections.extraShot}-${selections.syrup}-${selections.notes}-${customOptionsKey}`;
+    // Simplified cart key
+    const cartKey = `${drink.id}-${selections.notes}-${customOptionsKey}`;
     setCart(prev => {
       const current = prev[cartKey];
       const nextQty = (current?.quantity || 0) + 1;
@@ -190,7 +176,13 @@ export function Orders() {
         [cartKey]: { 
           drinkId: drink.id,
           quantity: nextQty, 
-          ...selections
+          ...selections,
+          // Backward compatibility shim for CartItem type if needed
+          milk: selections.custom_options['legacy_milk'] || 'full cream',
+          size: selections.custom_options['legacy_size'] || 'Medium',
+          sugar: selections.custom_options['legacy_sugar'] || 0,
+          equal: selections.custom_options['legacy_equal'] || 0,
+          extraShot: selections.custom_options['legacy_extra_shot'] || 0,
         } 
       };
     });
@@ -232,15 +224,26 @@ export function Orders() {
     });
   };
 
-  const updateCartCustomization = (cartKey: string, field: 'milk' | 'sugar' | 'equal' | 'extraShot' | 'syrup' | 'notes' | 'custom_options', value: any) => {
+  const updateCartCustomization = (cartKey: string, field: 'notes' | 'custom_options', value: any) => {
     setCart(prev => {
       if (!prev[cartKey]) return prev;
+      const updatedItem = {
+        ...prev[cartKey],
+        [field]: value
+      };
+      
+      // Update shim values if custom_options changed
+      if (field === 'custom_options') {
+        updatedItem.milk = value['legacy_milk'] || 'full cream';
+        updatedItem.size = value['legacy_size'] || 'Medium';
+        updatedItem.sugar = value['legacy_sugar'] || 0;
+        updatedItem.equal = value['legacy_equal'] || 0;
+        updatedItem.extraShot = value['legacy_extra_shot'] || 0;
+      }
+
       return {
         ...prev,
-        [cartKey]: {
-          ...prev[cartKey],
-          [field]: value
-        }
+        [cartKey]: updatedItem
       };
     });
   };
@@ -249,8 +252,9 @@ export function Orders() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName || totalItems === 0 || !selectedShop) return;
+    if (!customerName || totalItems === 0 || !selectedShop || isSending) return;
 
+    setIsSending(true);
     try {
       const promises = [];
       for (const [cartKey, item] of Object.entries(cart) as [string, CartItem][]) {
@@ -258,8 +262,14 @@ export function Orders() {
         if (!drink) continue;
 
         for (let i = 0; i < item.quantity; i++) {
-          const isExtraShotSize = settings.isSizeSelectionEnabled && (item.size === 'Medium' || item.size === 'Large');
-          const finalShots = (drink.espresso_shots || 0) + (isExtraShotSize ? 1 : 0) + (item.extraShot || 0);
+          const size = item.custom_options['legacy_size'] || 'Medium';
+          const milk = item.custom_options['legacy_milk'] || 'full cream';
+          const sugar = item.custom_options['legacy_sugar'] || 0;
+          const equal = item.custom_options['legacy_equal'] || 0;
+          const extraShot = item.custom_options['legacy_extra_shot'] || 0;
+
+          const isExtraShotSize = settings.isSizeSelectionEnabled && (size === 'Medium' || size === 'Large');
+          const finalShots = (drink.espresso_shots || 0) + (isExtraShotSize ? 1 : 0) + extraShot;
           
           // Create a modified snapshot to reflect the extra shot in the recipe and visualizer
           const modifiedSnapshot = {
@@ -269,7 +279,7 @@ export function Orders() {
           };
 
           // If extra shots added (size or manual), insert additional 'espresso' layers into the recipe
-          const totalExtraShots = (isExtraShotSize ? 1 : 0) + (item.extraShot || 0);
+          const totalExtraShots = (isExtraShotSize ? 1 : 0) + extraShot;
           for (let s = 0; s < totalExtraShots; s++) {
             const firstEspressoIndex = modifiedSnapshot.layer_order.indexOf('espresso');
             if (firstEspressoIndex !== -1) {
@@ -279,19 +289,34 @@ export function Orders() {
             }
           }
 
+          const namedCustomOptions: Record<string, any> = {};
+          if (item.custom_options) {
+            Object.entries(item.custom_options).forEach(([optId, value]) => {
+              // Skip legacy ones in named options as they have their own fields
+              if (optId.startsWith('legacy_')) return;
+              
+              const optDef = customOptions.find(o => o.id === optId);
+              if (optDef) {
+                namedCustomOptions[optDef.name] = value;
+              } else {
+                namedCustomOptions[optId] = value;
+              }
+            });
+          }
+
           promises.push(addDoc(collection(db, 'shops', selectedShop.id, 'orders'), {
             customer_name: customerName,
+            table_number: tableNumber,
             drink_id: drink.id,
             drink_name: drink.name,
             drink_snapshot: modifiedSnapshot,
-            milk_type: drink.leite ? item.milk : 'full cream',
-            size: settings.isSizeSelectionEnabled ? item.size : 'Medium',
+            milk_type: milk.toLowerCase(),
+            size: size,
             notes: item.notes || '',
-            sugar: item.sugar,
-            equal: item.equal || 0,
-            extra_shot: item.extraShot || 0,
-            syrup: item.syrup || '',
-            custom_options: item.custom_options || {},
+            sugar: sugar,
+            equal: equal,
+            extra_shot: extraShot,
+            custom_options: namedCustomOptions,
             barista_espresso_shots_needed: finalShots,
             barista_milk_needed: drink.leite || false,
             status: 'pending',
@@ -308,6 +333,8 @@ export function Orders() {
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `shops/${selectedShop.id}/orders`);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -353,60 +380,17 @@ export function Orders() {
                         Step {configModal.step + 1} of {enabledSteps.length}
                       </span>
                       <h4 className="text-xl font-bold text-slate-900 dark:text-white capitalize">
-                        {currentStepType === 'sweetener' 
-                          ? 'Sweetener' 
-                          : currentStepType.startsWith('custom_') 
+                        {currentStepType.startsWith('custom_') 
                             ? customOptions.find(o => o.id === currentStepType.replace('custom_', ''))?.name 
-                            : currentStepType}
+                            : currentStepType === 'sweetener' ? 'Sweetener'
+                            : currentStepType === 'notes' ? 'Additional Notes' : currentStepType}
                       </h4>
                     </div>
 
                     <div className="min-h-[120px] flex items-center justify-center">
-                      {currentStepType === 'size' && (
-                        <div className="grid grid-cols-2 gap-3 w-full">
-                          {(['Piccolo', 'Small', 'Medium', 'Large'] as DrinkSize[]).map((size) => (
-                            <button
-                              key={size}
-                              onClick={() => setConfigModal({
-                                ...configModal,
-                                selections: { ...configModal.selections, size }
-                              })}
-                              className={`py-3 rounded-xl font-bold text-lg transition-all border-2 ${
-                                configModal.selections.size === size
-                                  ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
-                                  : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                              }`}
-                            >
-                              {size}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {currentStepType === 'milk' && (
-                        <div className="grid grid-cols-2 gap-3 w-full">
-                          {(['full cream', 'lactose free', 'skinny', 'almond', 'oat', 'soy'] as MilkType[]).map((milk) => (
-                            <button
-                              key={milk}
-                              onClick={() => setConfigModal({
-                                ...configModal,
-                                selections: { ...configModal.selections, milk }
-                              })}
-                              className={`py-3 rounded-xl font-bold text-sm transition-all border-2 capitalize ${
-                                configModal.selections.milk === milk
-                                  ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
-                                  : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                              }`}
-                            >
-                              {milk}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
                       {currentStepType === 'sweetener' && (
                         <div className="flex flex-col gap-6 w-full">
-                          {configModal.drink.enabledConfigurations?.sugar !== false && (
+                          {configModal.drink.enabledConfigurations?.legacy_sugar && (
                             <div className="flex flex-col items-center">
                               <span className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-widest">Sugar</span>
                               <div className="flex items-center space-x-8">
@@ -415,7 +399,10 @@ export function Orders() {
                                     ...configModal,
                                     selections: { 
                                       ...configModal.selections, 
-                                      sugar: Math.max(0, configModal.selections.sugar - 1) 
+                                      custom_options: {
+                                        ...configModal.selections.custom_options,
+                                        legacy_sugar: Math.max(0, (configModal.selections.custom_options.legacy_sugar || 0) - 1)
+                                      }
                                     }
                                   })}
                                   className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
@@ -423,14 +410,17 @@ export function Orders() {
                                   <Minus className="w-6 h-6 sm:w-8 sm:h-8" />
                                 </button>
                                 <span className="text-4xl sm:text-6xl font-black text-slate-900 dark:text-white w-16 sm:w-20 text-center">
-                                  {configModal.selections.sugar}
+                                  {configModal.selections.custom_options.legacy_sugar || 0}
                                 </span>
                                 <button
                                   onClick={() => setConfigModal({
                                     ...configModal,
                                     selections: { 
                                       ...configModal.selections, 
-                                      sugar: configModal.selections.sugar + 1 
+                                      custom_options: {
+                                        ...configModal.selections.custom_options,
+                                        legacy_sugar: (configModal.selections.custom_options.legacy_sugar || 0) + 1
+                                      }
                                     }
                                   })}
                                   className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
@@ -441,7 +431,7 @@ export function Orders() {
                             </div>
                           )}
                           
-                          {configModal.drink.enabledConfigurations?.equal && (
+                          {configModal.drink.enabledConfigurations?.legacy_equal && (
                             <div className="flex flex-col items-center">
                               <span className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-widest">Equal</span>
                               <div className="flex items-center space-x-8">
@@ -450,7 +440,10 @@ export function Orders() {
                                     ...configModal,
                                     selections: { 
                                       ...configModal.selections, 
-                                      equal: Math.max(0, configModal.selections.equal - 1) 
+                                      custom_options: {
+                                        ...configModal.selections.custom_options,
+                                        legacy_equal: Math.max(0, (configModal.selections.custom_options.legacy_equal || 0) - 1)
+                                      }
                                     }
                                   })}
                                   className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
@@ -458,14 +451,17 @@ export function Orders() {
                                   <Minus className="w-6 h-6 sm:w-8 sm:h-8" />
                                 </button>
                                 <span className="text-4xl sm:text-6xl font-black text-slate-900 dark:text-white w-16 sm:w-20 text-center">
-                                  {configModal.selections.equal}
+                                  {configModal.selections.custom_options.legacy_equal || 0}
                                 </span>
                                 <button
                                   onClick={() => setConfigModal({
                                     ...configModal,
                                     selections: { 
                                       ...configModal.selections, 
-                                      equal: configModal.selections.equal + 1 
+                                      custom_options: {
+                                        ...configModal.selections.custom_options,
+                                        legacy_equal: (configModal.selections.custom_options.legacy_equal || 0) + 1
+                                      }
                                     }
                                   })}
                                   className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
@@ -475,41 +471,6 @@ export function Orders() {
                               </div>
                             </div>
                           )}
-                        </div>
-                      )}
-
-                      {currentStepType === 'extra_shot' && (
-                        <div className="flex flex-col items-center">
-                          <span className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-widest">Extra Espresso Shots</span>
-                          <div className="flex items-center space-x-8">
-                            <button
-                              onClick={() => setConfigModal({
-                                ...configModal,
-                                selections: { 
-                                  ...configModal.selections, 
-                                  extraShot: Math.max(0, configModal.selections.extraShot - 1) 
-                                }
-                              })}
-                              className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
-                            >
-                              <Minus className="w-8 h-8" />
-                            </button>
-                            <span className="text-6xl font-black text-slate-900 dark:text-white w-20 text-center">
-                              {configModal.selections.extraShot}
-                            </span>
-                            <button
-                              onClick={() => setConfigModal({
-                                ...configModal,
-                                selections: { 
-                                  ...configModal.selections, 
-                                  extraShot: configModal.selections.extraShot + 1 
-                                }
-                              })}
-                              className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors border border-slate-200 dark:border-slate-700"
-                            >
-                              <Plus className="w-8 h-8" />
-                            </button>
-                          </div>
                         </div>
                       )}
 
@@ -538,7 +499,7 @@ export function Orders() {
                                     : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                                 }`}
                               >
-                                <span className="text-lg font-black uppercase">{configModal.selections.custom_options[optId] ? 'ON' : 'OFF'}</span>
+                                <span className="text-lg font-black uppercase">{configModal.selections.custom_options[optId] ? 'YES' : 'NO'}</span>
                               </button>
                             </div>
                           );
@@ -616,40 +577,6 @@ export function Orders() {
                         return null;
                       })()}
 
-                      {currentStepType === 'syrup' && (
-                        <div className="grid grid-cols-2 gap-3 w-full max-h-[200px] overflow-y-auto pr-2">
-                          <button
-                            onClick={() => setConfigModal({
-                              ...configModal,
-                              selections: { ...configModal.selections, syrup: '' }
-                            })}
-                            className={`py-3 rounded-xl font-bold text-sm transition-all border-2 ${
-                              configModal.selections.syrup === ''
-                                ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
-                                : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                            }`}
-                          >
-                            None
-                          </button>
-                          {syrups.map((syrup) => (
-                            <button
-                              key={syrup.id}
-                              onClick={() => setConfigModal({
-                                ...configModal,
-                                selections: { ...configModal.selections, syrup: syrup.name }
-                              })}
-                              className={`py-3 rounded-xl font-bold text-sm transition-all border-2 ${
-                                configModal.selections.syrup === syrup.name
-                                  ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
-                                  : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                              }`}
-                            >
-                              {syrup.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
                       {currentStepType === 'notes' && (
                         <textarea
                           value={configModal.selections.notes}
@@ -712,7 +639,7 @@ export function Orders() {
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto pr-2">
           <div className="shrink-0">
             <div className="flex justify-between items-center mb-2">
-              <label className="block text-base sm:text-lg lg:text-xl font-medium text-slate-700 dark:text-slate-300">Customer Name</label>
+              <label className="block text-base sm:text-lg lg:text-xl font-medium text-slate-700 dark:text-slate-300">Customer Details</label>
               <button 
                 type="button" 
                 onClick={() => { setCart({}); setCustomerName(''); }} 
@@ -721,14 +648,27 @@ export function Orders() {
                 Clear Order
               </button>
             </div>
-            <input
-              type="text"
-              required
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              className="block w-full rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 text-base sm:text-lg lg:text-xl p-3 lg:p-4 border transition-colors"
-              placeholder="Ex: John"
-            />
+            <div className="flex gap-4">
+              <div className="w-1/3">
+                <input
+                  type="text"
+                  value={tableNumber}
+                  onChange={(e) => setTableNumber(e.target.value)}
+                  className="block w-full rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 text-base sm:text-lg lg:text-xl p-3 lg:p-4 border transition-colors"
+                  placeholder="Table #"
+                />
+              </div>
+              <div className="w-2/3">
+                <input
+                  type="text"
+                  required
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  className="block w-full rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm focus:border-amber-500 focus:ring-amber-500 text-base sm:text-lg lg:text-xl p-3 lg:p-4 border transition-colors"
+                  placeholder="Customer Name (Ex: John)"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex-1 min-h-[200px] flex flex-col">
@@ -801,97 +741,75 @@ export function Orders() {
                         </div>
                       </div>
 
-                      {(() => {
-                        const drink = drinks.find(d => d.id === cartItem.drinkId);
-                        if (drink?.leite && drink?.enabledConfigurations?.milk !== false) {
+                      {customOptions.map((opt) => {
+                        if (!cartItem.drinkId || !drinks.find(d => d.id === cartItem.drinkId)?.enabledConfigurations?.[opt.id]) return null;
+
+                        const val = cartItem.custom_options[opt.id];
+                        
+                        if (opt.type === 'switch') {
                           return (
-                            <div>
-                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">Milk</label>
+                            <div key={opt.id}>
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">{opt.name}</label>
+                              <button
+                                type="button"
+                                onClick={() => updateCartCustomization(cartKey, 'custom_options', { ...cartItem.custom_options, [opt.id]: !val })}
+                                className={`w-full p-1.5 rounded-md border text-xs font-bold uppercase transition-colors ${
+                                  val 
+                                    ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-400 border-amber-200 dark:border-amber-800' 
+                                    : 'bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-500 border-slate-200 dark:border-slate-700'
+                                }`}
+                              >
+                                {val ? 'YES' : 'NO'}
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (opt.type === 'quantity') {
+                          return (
+                            <div key={opt.id}>
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">{opt.name}</label>
+                              <div className="flex items-center space-x-2 bg-slate-50 dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-700 p-1 transition-colors">
+                                <button
+                                  type="button"
+                                  onClick={() => updateCartCustomization(cartKey, 'custom_options', { ...cartItem.custom_options, [opt.id]: Math.max(0, (val || 0) - 1) })}
+                                  className="p-1 rounded bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shadow-sm flex-1 flex justify-center border border-slate-200 dark:border-slate-700"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <span className="font-bold text-xs w-4 text-center text-slate-900 dark:text-white">{val || 0}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateCartCustomization(cartKey, 'custom_options', { ...cartItem.custom_options, [opt.id]: (val || 0) + 1 })}
+                                  className="p-1 rounded bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shadow-sm flex-1 flex justify-center border border-slate-200 dark:border-slate-700"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        if (opt.type === 'list') {
+                          return (
+                            <div key={opt.id}>
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">{opt.name}</label>
                               <select
-                                value={cartItem.milk}
-                                onChange={(e) => updateCartCustomization(cartKey, 'milk', e.target.value as MilkType)}
+                                value={val || ''}
+                                onChange={(e) => updateCartCustomization(cartKey, 'custom_options', { ...cartItem.custom_options, [opt.id]: e.target.value })}
                                 className="block w-full rounded-md border-slate-300 dark:border-slate-700 shadow-sm focus:border-amber-500 focus:ring-amber-500 text-xs p-1.5 border bg-white dark:bg-slate-900 text-slate-900 dark:text-white transition-colors"
                               >
-                                <option value="full cream">Full Cream</option>
-                                <option value="lactose free">Lactose Free</option>
-                                <option value="skinny">Skinny</option>
-                                <option value="almond">Almond</option>
-                                <option value="oat">Oat</option>
-                                <option value="soy">Soy</option>
+                                {opt.listOptions?.map(item => (
+                                  <option key={item} value={item}>{item}</option>
+                                ))}
                               </select>
                             </div>
                           );
                         }
-                        return null;
-                      })()}
-                      
-                      {(() => {
-                        const drink = drinks.find(d => d.id === cartItem.drinkId);
-                        if (drink?.enabledConfigurations?.sugar !== false) {
-                          return (
-                            <div>
-                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">Sugar</label>
-                              <div className="flex items-center space-x-2 bg-slate-50 dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-700 p-1 transition-colors">
-                                <button
-                                  type="button"
-                                  onClick={() => updateCartCustomization(cartKey, 'sugar', Math.max(0, cartItem.sugar - 1))}
-                                  className="p-1 rounded bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shadow-sm flex-1 flex justify-center border border-slate-200 dark:border-slate-700"
-                                >
-                                  <Minus className="w-3 h-3" />
-                                </button>
-                                <span className="font-bold text-xs w-4 text-center text-slate-900 dark:text-white">{cartItem.sugar}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => updateCartCustomization(cartKey, 'sugar', cartItem.sugar + 1)}
-                                  className="p-1 rounded bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shadow-sm flex-1 flex justify-center border border-slate-200 dark:border-slate-700"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        }
-                        return null;
-                      })()}
 
-                      {(() => {
-                        const drink = drinks.find(d => d.id === cartItem.drinkId);
-                        if (drink?.enabledConfigurations?.equal) {
-                          return (
-                            <div>
-                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">Equal</label>
-                              <div className="flex items-center space-x-2 bg-slate-50 dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-700 p-1 transition-colors">
-                                <button
-                                  type="button"
-                                  onClick={() => updateCartCustomization(cartKey, 'equal', Math.max(0, cartItem.equal - 1))}
-                                  className="p-1 rounded bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shadow-sm flex-1 flex justify-center border border-slate-200 dark:border-slate-700"
-                                >
-                                  <Minus className="w-3 h-3" />
-                                </button>
-                                <span className="font-bold text-xs w-4 text-center text-slate-900 dark:text-white">{cartItem.equal}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => updateCartCustomization(cartKey, 'equal', cartItem.equal + 1)}
-                                  className="p-1 rounded bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 shadow-sm flex-1 flex justify-center border border-slate-200 dark:border-slate-700"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        }
                         return null;
-                      })()}
+                      })}
 
-                      {cartItem.syrup && (
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">Syrup</label>
-                          <div className="p-1.5 bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-400 rounded-md border border-amber-200 dark:border-amber-800 text-xs font-bold uppercase text-center">
-                            {cartItem.syrup}
-                          </div>
-                        </div>
-                      )}
-                      
                       <div>
                         <label className="block text-xs font-medium text-slate-700 dark:text-slate-400 mb-1">Notes</label>
                         <input
@@ -916,10 +834,21 @@ export function Orders() {
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={totalItems === 0 || !customerName}
-          className="flex items-center justify-center py-4 px-8 border border-transparent rounded-full shadow-2xl text-xl font-bold text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all duration-150 ease-in-out transform hover:-translate-y-1"
+          disabled={totalItems === 0 || !customerName || isSending}
+          className="flex items-center justify-center py-4 px-8 border border-transparent rounded-full shadow-2xl text-xl font-bold text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all duration-150 ease-in-out transform hover:-translate-y-1 min-w-[160px]"
         >
-          SEND ({totalItems})
+          {isSending ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center"
+            >
+              <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin mr-3" />
+              SENDING...
+            </motion.div>
+          ) : (
+            `SEND (${totalItems})`
+          )}
         </button>
       </div>
     </div>

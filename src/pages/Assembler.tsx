@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Order, OperationType, MilkType, AppSettings } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
-import { CheckCircle, X, Check, FileText, Coffee } from 'lucide-react';
+import { CheckCircle, X, Check, FileText, Coffee, Volume2, VolumeX } from 'lucide-react';
 import { useIngredients } from '../hooks/useIngredients';
 import { useShop } from '../contexts/ShopContext';
 
@@ -30,13 +30,51 @@ export function Assembler() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showRecipe, setShowRecipe] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({ isSizeSelectionEnabled: true });
+  const [audioEnabled, setAudioEnabled] = useState(() => {
+    const saved = localStorage.getItem('assembler_audio_enabled');
+    return saved === null ? true : saved === 'true';
+  });
+  const lastProcessedOrderId = useRef<string | null>(null);
   const ingredients = useIngredients();
+
+  useEffect(() => {
+    localStorage.setItem('assembler_audio_enabled', audioEnabled.toString());
+  }, [audioEnabled]);
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      const newestOrder = orders[orders.length - 1];
+      
+      if (lastProcessedOrderId.current === null) {
+        lastProcessedOrderId.current = newestOrder.id;
+        return;
+      }
+
+      if (audioEnabled && newestOrder.id !== lastProcessedOrderId.current) {
+        const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+        audio.play().catch(e => console.log('Audio notification blocked by browser. Click anywhere to enable.', e));
+        lastProcessedOrderId.current = newestOrder.id;
+      }
+    }
+  }, [orders, audioEnabled]);
+
+  const toggleAudio = () => {
+    const nextState = !audioEnabled;
+    setAudioEnabled(nextState);
+    if (nextState) {
+      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+      audio.play().catch(e => console.log('Audio test failed:', e));
+    }
+  };
 
   useEffect(() => {
     if (!selectedShop) return;
 
-    // Assembler sees all pending orders, same as Barista
-    const q = query(collection(db, 'shops', selectedShop.id, 'orders'), where('status', '==', 'pending'));
+    // Assembler sees all pending and preparing orders
+    const q = query(
+      collection(db, 'shops', selectedShop.id, 'orders'), 
+      where('status', 'in', ['pending', 'preparing'])
+    );
     const unsubscribeOrders = onSnapshot(
       q,
       (snapshot) => {
@@ -66,6 +104,17 @@ export function Assembler() {
       unsubscribeSettings();
     };
   }, [selectedShop]);
+
+  const handlePreparing = async (orderId: string) => {
+    if (!selectedShop) return;
+    try {
+      await updateDoc(doc(db, 'shops', selectedShop.id, 'orders', orderId), {
+        status: 'preparing'
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/orders/${orderId}`);
+    }
+  };
 
   const handleComplete = async (orderId: string) => {
     if (!selectedShop) return;
@@ -100,6 +149,22 @@ export function Assembler() {
 
   return (
     <div className="flex-1 flex flex-col h-full relative transition-colors duration-300">
+      <div className="flex justify-end mb-4 px-2">
+        <button
+          onClick={toggleAudio}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${
+            audioEnabled 
+              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800 shadow-sm hover:translate-y-[-1px]' 
+              : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500 border border-slate-200 dark:border-slate-700 grayscale'
+          }`}
+        >
+          {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+          <div className="flex flex-col items-start leading-none">
+            <span className="text-[10px] uppercase font-black opacity-60">Assembler Alerts</span>
+            <span className="text-sm uppercase tracking-wider">{audioEnabled ? 'Sound ON' : 'Sound OFF'}</span>
+          </div>
+        </button>
+      </div>
       {/* Recipe Modal */}
       {showRecipe && selectedOrder && (
         <div 
@@ -120,7 +185,10 @@ export function Assembler() {
                   )}
                   <h3 className="text-2xl sm:text-4xl font-black text-white">{selectedOrder.drink_name}</h3>
                 </div>
-                <p className="text-slate-400 text-base sm:text-lg">For {selectedOrder.customer_name}</p>
+                <p className="text-slate-400 text-base sm:text-lg">
+                  For {selectedOrder.customer_name}
+                  {selectedOrder.table_number && <span className="ml-2 px-2 py-0.5 bg-slate-800 text-slate-300 rounded-md text-sm font-bold border border-slate-700">Table {selectedOrder.table_number}</span>}
+                </p>
               </div>
               <button onClick={() => { setShowRecipe(false); setSelectedOrder(null); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full transition-colors shrink-0 ml-4">
                 <X className="w-6 h-6 sm:w-8 sm:h-8 text-slate-300" />
@@ -144,6 +212,24 @@ export function Assembler() {
                       </div>
                     </div>
                   ))}
+                  
+                  {/* Custom Options in Recipe */}
+                  {selectedOrder.custom_options && Object.entries(selectedOrder.custom_options).some(([_, v]) => !!v) && (
+                    <div className="mt-4 pt-4 border-t border-slate-700 space-y-2">
+                       <p className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] mb-2">Customizations</p>
+                       <div className="grid grid-cols-1 gap-2">
+                        {Object.entries(selectedOrder.custom_options).map(([key, value]) => {
+                          if (!value) return null;
+                          return (
+                            <div key={key} className="flex justify-between items-center bg-blue-500/10 border border-blue-500/20 px-3 py-2 rounded-lg">
+                              <span className="text-blue-400 font-bold text-xs uppercase tracking-wider">{key.replace(/_/g, ' ')}</span>
+                              <span className="text-blue-200 font-black">{typeof value === 'boolean' ? 'YES' : value}</span>
+                            </div>
+                          );
+                        })}
+                       </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -168,7 +254,11 @@ export function Assembler() {
           {orders.map((order, index) => (
             <div 
               key={order.id} 
-              className="w-full flex-1 bg-white dark:bg-slate-800 rounded-xl shadow-md border-2 border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col sm:flex-row relative text-left transition-all group min-h-[120px] sm:min-h-[160px]"
+              className={`w-full flex-1 rounded-xl shadow-md border-2 overflow-hidden flex flex-col sm:flex-row relative text-left transition-all group min-h-[120px] sm:min-h-[160px] ${
+                order.status === 'preparing' 
+                  ? 'bg-blue-50 dark:bg-blue-900/10 border-blue-400 dark:border-blue-500 ring-2 ring-blue-400/20' 
+                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+              }`}
             >
               <div className="absolute top-0 right-0 bg-amber-500 text-white px-3 py-1 rounded-bl-lg font-black z-10 text-xs sm:text-sm">
                 #{index + 1}
@@ -180,7 +270,14 @@ export function Assembler() {
               
               <div className="p-3 sm:p-4 lg:p-6 flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6">
                 <div className="flex-1 flex flex-col justify-center">
-                  <h3 className="text-sm sm:text-base lg:text-lg font-medium text-slate-500 dark:text-slate-400 mb-1 leading-tight pr-6 sm:pr-0">{order.customer_name}</h3>
+                  <div className="flex items-center gap-2 mb-1 pr-6 sm:pr-0">
+                    <h3 className="text-sm sm:text-base lg:text-lg font-medium text-slate-500 dark:text-slate-400 leading-tight">{order.customer_name}</h3>
+                    {order.table_number && (
+                      <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-xs font-bold border border-slate-200 dark:border-slate-600">
+                        Table {order.table_number}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex flex-col">
                     {settings.isSizeSelectionEnabled && (
                       <span className={`inline-block px-3 py-1 rounded-md font-black uppercase tracking-widest text-2xl sm:text-3xl lg:text-4xl mb-1 w-fit shadow-sm ${sizeColors[order.size || 'Medium']}`}>
@@ -188,11 +285,12 @@ export function Assembler() {
                       </span>
                     )}
                     <div className="flex items-center gap-3">
-                      <p className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-800 dark:text-white">{order.drink_name}</p>
-                      <div className="flex items-center gap-1 bg-amber-100 dark:bg-amber-900/30 text-amber-900 dark:text-amber-400 px-3 py-1 rounded-lg border border-amber-200 dark:border-amber-800 shadow-sm">
-                        <Coffee className="w-4 h-4 sm:w-5 sm:h-5" />
-                        <span className="text-lg sm:text-xl font-black">{order.drink_snapshot.espresso_shots}</span>
-                      </div>
+                      <p className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-800 dark:text-white uppercase">{order.drink_name}</p>
+                      {order.extra_shot > 0 && (
+                        <div className="bg-purple-600 text-white px-2 py-1 rounded font-black text-[10px] sm:text-xs uppercase tracking-tighter whitespace-nowrap animate-pulse">
+                          Extra Shot
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -214,12 +312,17 @@ export function Assembler() {
                       <span className="text-slate-900 dark:text-white text-lg sm:text-xl">{order.equal}</span>
                     </div>
                   )}
-                  {order.syrup && (
-                    <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex justify-between items-center shadow-sm bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-900/50 transition-colors">
-                      <span className="text-amber-600 dark:text-amber-400">Syrup</span>
-                      <span className="text-amber-900 dark:text-amber-200 uppercase tracking-wider">{order.syrup}</span>
-                    </div>
-                  )}
+                  {order.custom_options && Object.entries(order.custom_options).map(([key, value]) => {
+                    if (!value) return null;
+                    return (
+                      <div key={key} className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex justify-between items-center shadow-sm bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-900/50 transition-colors">
+                        <span className="text-blue-600 dark:text-blue-400 capitalize">{key.replace(/_/g, ' ')}</span>
+                        <span className="text-blue-900 dark:text-blue-200 uppercase tracking-wider">
+                          {typeof value === 'boolean' ? 'YES' : value}
+                        </span>
+                      </div>
+                    );
+                  })}
                   {order.notes && (
                     <div className="px-3 py-2 rounded-lg font-bold text-sm sm:text-base flex flex-col sm:flex-row sm:justify-between sm:items-center shadow-sm bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-900/50 gap-1 transition-colors">
                       <span className="text-red-500 dark:text-red-400 uppercase tracking-widest text-xs shrink-0">Notes</span>
@@ -231,16 +334,27 @@ export function Assembler() {
                 <div className="flex sm:flex-col gap-2 shrink-0 mt-4 sm:mt-0">
                   <button 
                     onClick={() => handleViewRecipe(order)}
-                    className="flex-1 sm:flex-none py-3 px-4 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center transition-colors"
+                    className="flex-1 sm:flex-none py-2 px-4 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded-xl font-bold text-sm flex items-center justify-center transition-colors"
                   >
-                    <FileText className="w-5 h-5 mr-2" />
+                    <FileText className="w-4 h-4 mr-2" />
                     Recipe
                   </button>
                   <button 
-                    onClick={() => handleComplete(order.id)}
-                    className="flex-1 sm:flex-none py-3 px-4 bg-green-500 text-white hover:bg-green-600 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center transition-colors shadow-md"
+                    onClick={() => handlePreparing(order.id)}
+                    disabled={order.status === 'preparing'}
+                    className={`flex-1 sm:flex-none py-2 px-4 rounded-xl font-bold text-sm flex items-center justify-center transition-all shadow-md ${
+                      order.status === 'preparing'
+                        ? 'bg-blue-600 text-white shadow-inner opacity-80'
+                        : 'bg-amber-500 text-white hover:bg-amber-600'
+                    }`}
                   >
-                    <Check className="w-5 h-5 mr-2" />
+                    {order.status === 'preparing' ? 'PREPARING...' : 'PREPARING'}
+                  </button>
+                  <button 
+                    onClick={() => handleComplete(order.id)}
+                    className="flex-1 sm:flex-none py-2 px-4 bg-green-500 text-white hover:bg-green-600 rounded-xl font-bold text-sm flex items-center justify-center transition-colors shadow-md"
+                  >
+                    <Check className="w-4 h-4 mr-2" />
                     Deliver
                   </button>
                 </div>

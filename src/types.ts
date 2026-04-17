@@ -5,6 +5,7 @@ export interface CustomOption {
   name: string;
   type: CustomOptionType;
   listOptions?: string[];
+  sortOrder?: number;
 }
 
 export interface Drink {
@@ -27,20 +28,20 @@ export interface Drink {
     milk?: boolean;
     sugar?: boolean;
     equal?: boolean;
-    syrup?: boolean;
     size?: boolean;
     extra_shot?: boolean;
     [key: string]: boolean | undefined;
   };
 }
 
-export type OrderStatus = 'pending' | 'completed';
+export type OrderStatus = 'pending' | 'preparing' | 'completed';
 export type MilkType = 'full cream' | 'lactose free' | 'skinny' | 'almond' | 'oat' | 'soy';
 export type DrinkSize = 'Piccolo' | 'Small' | 'Medium' | 'Large';
 
 export interface Order {
   id: string;
   customer_name: string;
+  table_number?: string;
   drink_id: string;
   drink_name: string;
   drink_snapshot: Drink;
@@ -50,7 +51,6 @@ export interface Order {
   sugar: number;
   equal: number;
   extra_shot: number;
-  syrup: string;
   custom_options?: Record<string, any>;
   barista_espresso_shots_needed: number;
   barista_milk_needed: boolean;

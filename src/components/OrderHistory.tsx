@@ -76,12 +76,13 @@ export function OrderHistory() {
   const exportToCSV = () => {
     if (filteredOrders.length === 0) return;
 
-    const headers = ['Date', 'Time', 'Customer', 'Drink', 'Milk', 'Sugar', 'Notes', 'Status'];
+    const headers = ['Date', 'Time', 'Table', 'Customer', 'Drink', 'Milk', 'Sugar', 'Notes', 'Status'];
     const rows = filteredOrders.map(order => {
       const dateObj = new Date(order.timestamp);
       return [
         dateObj.toLocaleDateString(),
         dateObj.toLocaleTimeString(),
+        `"${order.table_number || ''}"`,
         `"${order.customer_name}"`,
         `"${order.drink_name}"`,
         order.drink_snapshot?.leite ? order.milk_type : 'N/A',
@@ -249,7 +250,14 @@ export function OrderHistory() {
                             {order.status}
                           </span>
                         </div>
-                        <h4 className="font-bold text-slate-900 dark:text-white text-lg">{order.customer_name}</h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-bold text-slate-900 dark:text-white text-lg">{order.customer_name}</h4>
+                          {order.table_number && (
+                            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-xs font-bold border border-slate-200 dark:border-slate-600">
+                              Table {order.table_number}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-amber-700 dark:text-amber-500 font-medium">{order.drink_name}</p>
                       </div>
                       
