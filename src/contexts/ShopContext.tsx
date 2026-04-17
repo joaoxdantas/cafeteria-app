@@ -15,25 +15,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
 
   useEffect(() => {
-    const savedShop = localStorage.getItem('selectedShop');
-    if (savedShop) {
-      try {
-        const parsed = JSON.parse(savedShop);
-        setSelectedShop(parsed);
-      } catch (e) {
-        localStorage.removeItem('selectedShop');
-      }
-    }
-  }, []);
-
-  useEffect(() => {
     if (!selectedShop?.id) return;
 
     const unsubscribe = onSnapshot(doc(db, 'shops', selectedShop.id), (snapshot) => {
       if (snapshot.exists()) {
         const updatedShop = { id: snapshot.id, ...snapshot.data() } as Shop;
         setSelectedShop(updatedShop);
-        localStorage.setItem('selectedShop', JSON.stringify(updatedShop));
       }
     });
 
@@ -42,12 +29,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
 
   const selectShop = (shop: Shop) => {
     setSelectedShop(shop);
-    localStorage.setItem('selectedShop', JSON.stringify(shop));
   };
 
   const logoutShop = () => {
     setSelectedShop(null);
-    localStorage.removeItem('selectedShop');
   };
 
   return (

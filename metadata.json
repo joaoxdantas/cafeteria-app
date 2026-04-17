@@ -1,5 +1,6 @@
 {
-  "name": "ILSC English Caffe",
-  "description": "",
-  "requestFramePermissions": []
+  "name": "Cafe Flow",
+  "description": "A streamlined cafe management and order customization system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }

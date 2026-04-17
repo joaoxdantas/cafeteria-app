@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Drink, OperationType, Shop, CustomOption, CustomOptionType, AppSettings } from '../types';
 import { DrinkVisualizer } from '../components/DrinkVisualizer';
 import { OrderHistory } from '../components/OrderHistory';
 import { handleFirestoreError } from '../lib/firestore-error';
-import { Trash2, Plus, ArrowUp, ArrowDown, History, Coffee, Edit2, X, Eye, EyeOff, Beaker, Store, Settings2, CheckCircle2, Upload, ArrowDownAz, TrendingUp, Filter, Square, Circle, Grid3X3, Waves, XCircle, GripVertical } from 'lucide-react';
+import { Trash2, Plus, History, Coffee, Edit2, X, Eye, EyeOff, Beaker, Store, Settings2, CheckCircle2, Upload, ArrowDownAz, TrendingUp, Filter, Square, Circle, Grid3X3, Waves, XCircle, GripVertical } from 'lucide-react';
 import { motion, Reorder } from 'motion/react';
 import { useIngredients, IngredientPattern } from '../hooks/useIngredients';
 import { useShop } from '../contexts/ShopContext';
@@ -444,18 +444,6 @@ export function Admin() {
     setLayers(layers.filter((_, i) => i !== index));
   };
 
-  const moveLayer = (index: number, direction: 'up' | 'down') => {
-    if (direction === 'up' && index > 0) {
-      const newLayers = [...layers];
-      [newLayers[index - 1], newLayers[index]] = [newLayers[index], newLayers[index - 1]];
-      setLayers(newLayers);
-    } else if (direction === 'down' && index < layers.length - 1) {
-      const newLayers = [...layers];
-      [newLayers[index + 1], newLayers[index]] = [newLayers[index], newLayers[index + 1]];
-      setLayers(newLayers);
-    }
-  };
-
   const currentDrinkPreview: Partial<Drink> = {
     layer_order: layers,
   };
@@ -578,24 +566,21 @@ export function Admin() {
     }
   };
 
-  const moveDrink = async (index: number, direction: 'up' | 'down') => {
+  const handleReorderDrinks = async (newOrder: Drink[]) => {
     if (!selectedShop) return;
-    try {
-      const updates = drinks.map((d, i) => {
-        if (d.sortOrder !== i) {
-          return updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', d.id), { sortOrder: i });
-        }
-        return Promise.resolve();
-      });
-      await Promise.all(updates);
+    
+    // Update local state first for immediate UI response
+    const otherDrinks = drinks.filter(d => (d.category || 'Drinks') !== selectedCategory);
+    // Merge newOrder with others, maintaining overall list
+    setDrinks([...newOrder, ...otherDrinks]);
 
-      if (direction === 'up' && index > 0) {
-        await updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', drinks[index].id), { sortOrder: index - 1 });
-        await updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', drinks[index - 1].id), { sortOrder: index });
-      } else if (direction === 'down' && index < drinks.length - 1) {
-        await updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', drinks[index].id), { sortOrder: index + 1 });
-        await updateDoc(doc(db, 'shops', selectedShop.id, 'drinks', drinks[index + 1].id), { sortOrder: index });
-      }
+    try {
+      const batch = writeBatch(db);
+      newOrder.forEach((drink, index) => {
+        const drinkRef = doc(db, 'shops', selectedShop.id, 'drinks', drink.id);
+        batch.update(drinkRef, { sortOrder: index });
+      });
+      await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/drinks`);
     }
@@ -784,27 +769,29 @@ export function Admin() {
                   ))}
                 </div>
 
-                <div className="bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 p-2 sm:p-4 min-h-[150px] sm:min-h-[200px] flex flex-col-reverse gap-2 transition-colors">
+                <Reorder.Group axis="y" values={layers} onReorder={setLayers} className="bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 p-2 sm:p-4 min-h-[150px] sm:min-h-[200px] flex flex-col-reverse gap-2 transition-colors">
                   {layers.map((layer, index) => {
                     const opt = ingredients.find(o => o.id === layer);
                     const bgColor = opt?.color === 'transparent' ? '#f8fafc' : (opt?.color || '#e2e8f0');
                     const textColor = getContrastYIQ(bgColor);
                     
                     return (
-                      <div key={`${layer}-${index}`} className="flex items-center justify-between p-2 rounded-md shadow-sm border border-slate-200 dark:border-slate-700" style={{ backgroundColor: bgColor, color: textColor }}>
-                        <span className="font-medium text-xs sm:text-sm">{index + 1}. {opt?.name || layer}</span>
-                        <div className="flex items-center space-x-1">
-                          <button type="button" onClick={() => moveLayer(index, 'down')} disabled={index === 0} className="p-1 hover:bg-black/10 rounded disabled:opacity-30">
-                            <ArrowDown className="w-3 h-3 sm:w-4 sm:h-4" />
-                          </button>
-                          <button type="button" onClick={() => moveLayer(index, 'up')} disabled={index === layers.length - 1} className="p-1 hover:bg-black/10 rounded disabled:opacity-30">
-                            <ArrowUp className="w-3 h-3 sm:w-4 sm:h-4" />
-                          </button>
+                      <Reorder.Item 
+                        key={`${layer}-${index}`} 
+                        value={layer}
+                        className="flex items-center justify-between p-2 rounded-md shadow-sm border border-slate-200 dark:border-slate-700 cursor-grab active:cursor-grabbing" 
+                        style={{ backgroundColor: bgColor, color: textColor }}
+                      >
+                        <div className="flex items-center">
+                          <GripVertical className="w-4 h-4 mr-2 opacity-50" />
+                          <span className="font-medium text-xs sm:text-sm">{index + 1}. {opt?.name || layer}</span>
+                        </div>
+                        <div className="flex items-center">
                           <button type="button" onClick={() => removeLayer(index)} className="p-1 hover:bg-black/10 rounded text-red-500 ml-1 sm:ml-2 bg-white/50">
                             <Trash2 className="w-3 h-3 sm:w-4 sm:h-4" />
                           </button>
                         </div>
-                      </div>
+                      </Reorder.Item>
                     );
                   })}
                   {layers.length === 0 && (
@@ -812,7 +799,7 @@ export function Admin() {
                       No ingredients added.<br/>The cup is empty.
                     </div>
                   )}
-                </div>
+                </Reorder.Group>
               </div>
 
               <div>
@@ -853,42 +840,46 @@ export function Admin() {
             </div>
 
             <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Registered Recipes</h3>
-              <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-                {displayedDrinks.map((drink, index) => (
-                  <li key={drink.id} className={`py-2 sm:py-3 flex justify-between items-center ${drink.available === false ? 'opacity-50' : ''}`}>
-                    <div>
-                      <p className="text-sm font-medium text-slate-900 dark:text-white flex items-center">
-                        {drink.name}
-                        {drink.available === false && <span className="ml-2 text-xs bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full">Unavailable</span>}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {drink.espresso_shots} shots, {drink.leite ? 'with milk' : 'no milk'}
-                      </p>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Registered Recipes</h3>
+              <p className="text-[10px] text-slate-500 mb-4 italic">Drag to reorder drinks in this category.</p>
+              <Reorder.Group axis="y" values={displayedDrinks} onReorder={handleReorderDrinks} className="divide-y divide-slate-200 dark:divide-slate-800">
+                {displayedDrinks.map((drink) => (
+                  <Reorder.Item 
+                    key={drink.id} 
+                    value={drink}
+                    className={`py-2 sm:py-3 flex justify-between items-center bg-white dark:bg-slate-900 ${drink.available === false ? 'opacity-50' : ''}`}
+                  >
+                    <div className="flex items-center">
+                      <div className="cursor-grab active:cursor-grabbing p-1.5 text-slate-400 hover:text-slate-600 mr-2">
+                        <GripVertical className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-900 dark:text-white flex items-center">
+                          {drink.name}
+                          {drink.available === false && <span className="ml-2 text-xs bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full">Unavailable</span>}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {drink.espresso_shots} shots, {drink.leite ? 'with milk' : 'no milk'}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center space-x-1 sm:space-x-2">
                       <button onClick={() => toggleAvailability(drink)} className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200" title={drink.available === false ? "Make Available" : "Make Unavailable"}>
                         {drink.available === false ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
-                      <button onClick={() => moveDrink(index, 'up')} disabled={index === 0} className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-30">
-                        <ArrowUp className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => moveDrink(index, 'down')} disabled={index === drinks.length - 1} className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-30">
-                        <ArrowDown className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => handleEdit(drink)} className="p-1 text-blue-500 hover:text-blue-700">
+                      <button onClick={() => handleEdit(drink)} className="p-1 text-amber-600 hover:text-amber-800">
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button onClick={() => handleDelete(drink.id)} className="p-1 text-red-500 hover:text-red-700">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                  </li>
+                  </Reorder.Item>
                 ))}
                 {displayedDrinks.length === 0 && (
                   <li className="py-3 text-sm text-slate-500 dark:text-slate-400 text-center">No recipes registered in this category.</li>
                 )}
-              </ul>
+              </Reorder.Group>
             </div>
           </div>
         </div>
