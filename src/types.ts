@@ -1,90 +1,94 @@
-export type CustomOptionType = 'switch' | 'list' | 'quantity';
+export type Unit = 'kg' | 'g' | 'L' | 'ml' | 'unidade' | 'caixa';
 
-export interface CustomOption {
+export type Language = 'pt-BR' | 'en-AU' | 'fil';
+
+export interface Supplier {
   id: string;
   name: string;
-  type: CustomOptionType;
-  listOptions?: string[];
-  sortOrder?: number;
+  contact: string;
+  categories: string[];
 }
 
-export interface Drink {
+export interface Item {
   id: string;
   name: string;
-  category?: string;
-  espresso_shots: number;
-  leite: boolean;
-  foam: number; // 0=none, 1=latte, 2=cappuccino, 3=macchiato
-  chocolate: number; // 0-3
-  sprinkles: boolean;
-  chai: number; // 0-3
-  whipped_cream: boolean;
-  hot_water: boolean;
-  layer_order: string[];
-  createdAt: string;
-  sortOrder?: number;
-  available?: boolean;
-  enabledConfigurations?: {
-    milk?: boolean;
-    sugar?: boolean;
-    equal?: boolean;
-    size?: boolean;
-    extra_shot?: boolean;
-    [key: string]: boolean | undefined;
-  };
+  categoryId: string;
+  categoryName: string;
+  quantity: number;
+  unit: Unit;
+  minStock: number;
+  supplierId?: string;
+  bestBefore?: string;
+  batch?: string;
 }
 
-export type OrderStatus = 'pending' | 'preparing' | 'completed';
-export type MilkType = 'full cream' | 'lactose free' | 'skinny' | 'almond' | 'oat' | 'soy';
-export type DrinkSize = 'Piccolo' | 'Small' | 'Medium' | 'Large';
+export type TransactionType = 'IN' | 'OUT' | 'WASTE';
 
-export interface Order {
+export interface Transaction {
   id: string;
-  customer_name: string;
-  table_number?: string;
-  drink_id: string;
-  drink_name: string;
-  drink_snapshot: Drink;
-  milk_type: MilkType;
-  size: DrinkSize;
+  itemId: string;
+  itemName: string;
+  type: TransactionType;
+  quantity: number;
+  date: string;
+  notes?: string;
+  cost?: number; // Optional: cost per unit on IN, or total lost on WASTE
+  bestBefore?: string;
+  batch?: string;
+}
+
+export interface TestMeasurement {
+  dose: number;
+  time: number;
+  yieldAmount: number;
+}
+
+export interface ItemHandling {
+  id: string;
+  itemId: string;
+  shelfLife: string;
+  temperature: string;
+  prepInstructions: string;
   notes: string;
-  sugar: number;
-  equal: number;
-  extra_shot: number;
-  custom_options?: Record<string, any>;
-  barista_espresso_shots_needed: number;
-  barista_milk_needed: boolean;
-  status: OrderStatus;
-  timestamp: string;
-  queueIndex?: number;
 }
 
-export interface AppSettings {
-  isSizeSelectionEnabled: boolean;
+export interface GroupHeadTest {
+  double: TestMeasurement;
+  lungo: TestMeasurement;
 }
 
-export interface Shop {
+export interface EspressoTest {
+  id: string;
+  date: string;
+  operator: string;
+  group1: GroupHeadTest;
+  group2: GroupHeadTest;
+}
+
+export interface MaintenanceRecord {
+  id: string;
+  date: string;
+  task: string;
+  operator: string;
+  notes: string;
+}
+
+export interface Ingredient {
+  name: string;
+  quantity: string;
+}
+
+export interface RecipeLayer {
+  label: string;
+  color: string;
+  height: string; // e.g., "15%" or "bg-[#...] h-[15%]"
+}
+
+export interface DrinkRecipe {
   id: string;
   name: string;
-  categories?: string[];
-  customOptions?: CustomOption[];
-  splashImageUrl?: string;
-  isMaster?: boolean;
-  createdAt: string;
-}
-
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: any;
+  ingredients: Ingredient[];
+  method: string;
+  image?: string;
+  layers?: RecipeLayer[];
 }
