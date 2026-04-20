@@ -61,6 +61,7 @@ export interface Order {
 
 export interface AppSettings {
   isSizeSelectionEnabled: boolean;
+  isFastPaceModeEnabled?: boolean;
 }
 
 export interface Shop {

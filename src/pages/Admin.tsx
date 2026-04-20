@@ -293,7 +293,20 @@ export function Admin() {
     if (!selectedShop) return;
     try {
       await setDoc(doc(db, 'shops', selectedShop.id, 'settings', 'app'), {
+        ...settings,
         isSizeSelectionEnabled: !settings.isSizeSelectionEnabled
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/settings/app`);
+    }
+  };
+
+  const toggleFastPaceMode = async () => {
+    if (!selectedShop) return;
+    try {
+      await setDoc(doc(db, 'shops', selectedShop.id, 'settings', 'app'), {
+        ...settings,
+        isFastPaceModeEnabled: !settings.isFastPaceModeEnabled
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `shops/${selectedShop.id}/settings/app`);
@@ -1132,6 +1145,31 @@ export function Admin() {
                     <span
                       className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
                         settings.isSizeSelectionEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm">
+                      <TrendingUp className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">Fast Pace Mode</p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">Simplified UI for high-speed ordering</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleFastPaceMode}
+                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 ${
+                      settings.isFastPaceModeEnabled ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        settings.isFastPaceModeEnabled ? 'translate-x-6' : 'translate-x-1'
                       }`}
                     />
                   </button>

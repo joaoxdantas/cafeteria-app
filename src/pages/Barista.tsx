@@ -211,7 +211,7 @@ export function Barista() {
             {Object.keys(milkCounts).length > 0 && (
               <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2 mt-2">
                 {Object.entries(milkCounts).map(([type, count]) => (
-                  <div key={type} className={`px-2 py-1 rounded-md font-bold text-xs sm:text-sm flex items-center gap-1.5 ${milkColors[type as MilkType].split(' hover:')[0]}`}>
+                  <div key={type} className={`px-2 py-1 rounded-md font-bold text-xs sm:text-sm flex items-center gap-1.5 ${(milkColors[type as MilkType] || 'bg-slate-500 text-white').split(' hover:')[0]}`}>
                     <span className="text-base sm:text-lg">{count}</span>
                     <span className="uppercase tracking-wider opacity-90">{type}</span>
                   </div>
@@ -224,7 +224,7 @@ export function Barista() {
               <button
                 key={order.id}
                 onClick={() => handleMilkClick(order.id)}
-                className={`w-full p-4 sm:p-8 rounded-xl shadow-md flex items-center justify-center transition-transform active:scale-95 relative overflow-hidden ${milkColors[order.milk_type as MilkType]}`}
+                className={`w-full p-4 sm:p-8 rounded-xl shadow-md flex items-center justify-center transition-transform active:scale-95 relative overflow-hidden ${milkColors[order.milk_type as MilkType] || 'bg-slate-500 text-white'}`}
               >
                 <div className="absolute top-0 right-0 bg-amber-500 text-white px-3 py-1.5 rounded-bl-lg font-black z-10 text-sm sm:text-base">
                   #{order.queueIndex}
@@ -232,7 +232,7 @@ export function Barista() {
                 <div className="flex flex-col items-center z-10 relative">
                   <div className="flex items-center gap-2">
                     {settings.isSizeSelectionEnabled && (
-                      <span className={`px-2 py-0.5 rounded text-lg sm:text-xl font-black shadow-sm border border-white/20 ${sizeColors[order.size || 'Medium']}`}>
+                      <span className={`px-2 py-0.5 rounded text-lg sm:text-xl font-black shadow-sm border border-white/20 ${sizeColors[order.size || 'Medium'] || 'bg-slate-500 text-white'}`}>
                         {order.size?.[0] || 'S'}
                       </span>
                     )}
