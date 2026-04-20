@@ -1,6 +1,6 @@
 {
-  "name": "CafeMestre - Gestão de Estoque e Receitas",
-  "description": "Sistema profissional de gestão de estoque, rastreabilidade de lotes, desperdício e calibração de espresso para cafeterias.",
+  "name": "Cafe Flow",
+  "description": "A streamlined cafe management and order customization system.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }
