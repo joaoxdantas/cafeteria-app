@@ -5,6 +5,7 @@ import { Order, OperationType } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { ChevronDown, ChevronUp, Download, Trash2, Filter, AlertTriangle } from 'lucide-react';
 import { useShop } from '../contexts/ShopContext';
+import { parseSafeDate } from '../lib/utils';
 
 export function OrderHistory() {
   const { selectedShop } = useShop();
@@ -37,7 +38,7 @@ export function OrderHistory() {
 
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
-      const orderDate = new Date(order.timestamp).toISOString().split('T')[0];
+      const orderDate = parseSafeDate(order.timestamp).toISOString().split('T')[0];
       const matchDate = filterDate ? orderDate === filterDate : true;
       const matchStatus = filterStatus !== 'all' ? order.status === filterStatus : true;
       const matchDrink = filterDrink ? order.drink_name.toLowerCase().includes(filterDrink.toLowerCase()) : true;
@@ -48,7 +49,7 @@ export function OrderHistory() {
   // Group orders by date
   const groupedOrders = useMemo(() => {
     return filteredOrders.reduce((acc, order) => {
-      const dateObj = new Date(order.timestamp);
+      const dateObj = parseSafeDate(order.timestamp);
       // Use a standard format for grouping, e.g., YYYY-MM-DD
       const dateKey = dateObj.toLocaleDateString();
       if (!acc[dateKey]) {
@@ -78,7 +79,7 @@ export function OrderHistory() {
 
     const headers = ['Date', 'Time', 'Table', 'Customer', 'Drink', 'Milk', 'Sugar', 'Notes', 'Status'];
     const rows = filteredOrders.map(order => {
-      const dateObj = new Date(order.timestamp);
+      const dateObj = parseSafeDate(order.timestamp);
       return [
         dateObj.toLocaleDateString(),
         dateObj.toLocaleTimeString(),
@@ -242,7 +243,7 @@ export function OrderHistory() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-sm font-medium text-slate-500 dark:text-slate-400">
-                            {new Date(order.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {parseSafeDate(order.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                             order.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400'

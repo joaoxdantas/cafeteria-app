@@ -7,6 +7,7 @@ import { DrinkVisualizer } from '../components/DrinkVisualizer';
 import { CheckCircle, X, Check, FileText, Coffee, Volume2, VolumeX } from 'lucide-react';
 import { useIngredients } from '../hooks/useIngredients';
 import { useShop } from '../contexts/ShopContext';
+import { parseSafeDate } from '../lib/utils';
 
 const milkColors: Record<MilkType, string> = {
   'almond': 'bg-red-500 text-white',
@@ -83,7 +84,7 @@ export function Assembler() {
           ...doc.data(),
         })) as Order[];
         // Sort by timestamp (oldest first, top to bottom)
-        ordersData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        ordersData.sort((a, b) => parseSafeDate(a.timestamp).getTime() - parseSafeDate(b.timestamp).getTime());
         setOrders(ordersData);
       },
       (error) => handleFirestoreError(error, OperationType.LIST, `shops/${selectedShop.id}/orders`)

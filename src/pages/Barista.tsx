@@ -5,6 +5,7 @@ import { Order, OperationType, MilkType, AppSettings } from '../types';
 import { handleFirestoreError } from '../lib/firestore-error';
 import { Coffee, Droplet, Volume2, VolumeX } from 'lucide-react';
 import { useShop } from '../contexts/ShopContext';
+import { parseSafeDate } from '../lib/utils';
 
 const milkColors: Record<MilkType, string> = {
   'almond': 'bg-red-500 text-white hover:bg-red-600',
@@ -83,7 +84,7 @@ export function Barista() {
         })) as Order[];
         
         // Sort by timestamp ASC (oldest first, so top is oldest)
-        ordersData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        ordersData.sort((a, b) => parseSafeDate(a.timestamp).getTime() - parseSafeDate(b.timestamp).getTime());
         
         // Add global queue index based on oldest first sorting
         const ordersWithIndex = ordersData.map((o, i) => ({ ...o, queueIndex: i + 1 }));
